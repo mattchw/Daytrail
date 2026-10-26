@@ -14,7 +14,7 @@ const sampleKey = (id: string, destination: string) => `sample:${JSON.stringify(
 const HYDRATION_ERROR = 'Some places could not load. Check your connection and retry.';
 
 /** Provider details live in this mounted session only, never inside the saved trip. */
-export function usePlaceData(trip: Trip, dayIndex: number, enabled = true): {
+export function usePlaceData(trip: Trip, dayIndex: number | 'all', enabled = true): {
   places: Record<string, Place>;
   register: (place: Place) => void;
   loading: boolean;
@@ -46,7 +46,8 @@ export function usePlaceData(trip: Trip, dayIndex: number, enabled = true): {
 
   const targets: HydrationTarget[] = [];
   if (enabled) {
-    const visibleIds = new Set(['hotel', trip.days[dayIndex]?.startPlaceId ?? 'hotel', ...(trip.days[dayIndex]?.items.map(item => item.placeId) ?? []), ...trip.ideas]);
+    const visibleDays = dayIndex === 'all' ? trip.days : trip.days.slice(dayIndex, dayIndex + 1);
+    const visibleIds = new Set(['hotel', ...visibleDays.flatMap(day => [day.startPlaceId ?? 'hotel', ...day.items.map(item => item.placeId)]), ...trip.ideas]);
     const targetKeys = new Set<string>();
     for (const id of visibleIds) {
       const place = base[id];
@@ -69,17 +70,26 @@ export function usePlaceData(trip: Trip, dayIndex: number, enabled = true): {
     setError(null);
     if (!enabled || pending.length === 0) { setLoading(false); return; }
     setLoading(true);
-    void Promise.allSettled(pending.map(async target => {
-      const place = target.source === 'google'
-        ? await fetchPlace(target.place.googlePlaceId!)
-        : await findSamplePlace(target.place, trip.destination);
-      // A response from a previous trip/day may be reused by the service cache later,
-      // but must not update the active view or its loading/error state.
-      if (active) remember(target.key, place);
-    })).then(results => {
+    let cursor = 0;
+    let failed = false;
+    // A whole-trip view can contain many places. Keep provider requests bounded,
+    // and stop starting work when the user changes trips or closes the view.
+    const hydrate = async () => {
+      while (active && cursor < pending.length) {
+        const target = pending[cursor++];
+        try {
+          const place = target.source === 'google'
+            ? await fetchPlace(target.place.googlePlaceId!)
+            : await findSamplePlace(target.place, trip.destination);
+          // Old responses may populate the service cache, never the active view.
+          if (active) remember(target.key, place);
+        } catch { failed = true; }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(4, pending.length) }, hydrate)).then(() => {
       if (!active) return;
       setLoading(false);
-      if (results.some(result => result.status === 'rejected')) setError(HYDRATION_ERROR);
+      if (failed) setError(HYDRATION_ERROR);
     });
     return () => { active = false; };
     // The signature captures every request input; base metadata is merged below each render.

@@ -2,7 +2,7 @@
 
 **Find your places. Plan your days.**
 
-An interactive travel-planning app based on the supplied planning-workspace reference. It includes Google Maps, live place discovery and journey estimates, a trip dashboard, responsive daily timelines, saved Ideas, custom places, drag-and-drop rearranging, cross-day moves, fixed bookings, notes, and undo.
+An interactive travel-planning app based on the supplied planning-workspace reference. It includes Google Maps, live place discovery and journey estimates, a whole-trip overview, a trip dashboard, responsive daily timelines, saved Ideas, custom places, drag-and-drop rearranging, cross-day moves, fixed bookings, notes, and undo.
 
 ## Run locally
 
@@ -53,7 +53,9 @@ The app loads the Maps JavaScript API once and shares its Places and Routes libr
 - `src/components/DayPlanForm.tsx`, `AddToTripDialog.tsx`, and `TravelLeg.tsx`: day setup, choosing an insertion position, and compact transport controls.
 - `src/useDiscovery.ts`: shared search, selected details, request versions, and mobile scroll state.
 - `src/components/DiscoveryExplorer.tsx`: photo cards and accessible place details.
-- `src/usePlaceData.ts`: fresh place-detail hydration for the active day and saved Ideas.
+- `src/usePlaceData.ts`: fresh place-detail hydration for the active day or whole trip and saved Ideas.
+- `src/useTripOverview.ts`: bounded whole-trip journey and visit-hours summaries with session-only reuse.
+- `src/components/TripOverview.tsx` and `AddDaysForm.tsx`: all-day planning, cross-day moves, Ideas placement, and extending trips.
 - `src/useLiveRoutes.ts`: departure-time conversion, sequential journey calculation, and route loading state.
 - `src/components/MapPanel.tsx`: Google map, synchronized stop selection, actual route paths, and place previews.
 - `src/components/TripDashboard.tsx`: trip creation, duplication, deletion, and navigation.
@@ -65,6 +67,10 @@ The app uses React, TypeScript, and Vite, with dnd kit for dragging and Lucide i
 ## Planning behaviour
 
 Trips are saved in this browser's local storage under `daytrail.workspace.v1`. There is no account, server database, or cross-device sync. Undo history lasts for the current session. Failed saves remain visible in the interface.
+
+Whole trip brings every day together with its stops, visit time, real journey estimates, return time, and scheduling issues. Drag stops or saved Ideas onto a day, or use their Move / Add controls to choose a precise position. Open day returns to the detailed planner. Missing journeys remain explicit; the overview does not use illustrative travel estimates.
+
+Add days is available in both the overview and the day tabs. Add one or more empty days, up to 30 total; the trip end date and day labels update across month and year boundaries. Existing plans stay intact, and Undo reverses an extension. New trips and shared snapshots open in the overview.
 
 Search Google Maps for places in the trip's destination, then add them to a day or save them to Ideas. Select a real hotel or another starting point before calculating the first and last journeys. Day plan lets each day have its own departure time, starting location, and optional same-day finish goal. Existing plans default to a 09:00 hotel departure. Return journeys still end at the trip’s stay; finish goals never shorten visits or move bookings.
 
@@ -90,7 +96,7 @@ Search requests use explicit field lists. Ratings and opening fields can affect 
 
 ## Stored place data
 
-Trips, user notes, visit durations, transport choices, bookings, and Google place IDs are saved locally. Google-supplied place names, addresses, coordinates, links, and attribution content are not saved in the trip payload. Current details are fetched into memory for the active day, its starting point, and saved Ideas. These details and route responses use transient session caches; they are not written to local storage. A restored Google place may briefly appear as **Saved place** or **Your stay** while its current details load.
+Trips, user notes, visit durations, transport choices, bookings, and Google place IDs are saved locally. Google-supplied place names, addresses, coordinates, links, and attribution content are not saved in the trip payload. Current details are fetched into memory for the active day, its starting point, and saved Ideas, or all planned places while the overview is visible. Whole-trip hydration uses up to four concurrent place requests; journey summaries load at most two days at a time. These details and route responses use transient session caches; they are not written to local storage. A restored Google place may briefly appear as **Saved place** or **Your stay** while its current details load.
 
 User-entered custom place data and the app's curated sample content remain part of the plan. Linking a custom place to Google preserves its user label, notes, and default visit duration separately from provider details. Removing browser storage removes saved trips. Accounts, a cloud database, and cross-device synchronisation are not implemented.
 

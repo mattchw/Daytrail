@@ -8,7 +8,7 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
 }).outputText;
 const model = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
-const { PLACES, seedTrip, createTrip, getPlaces, dayStartTime, dayStartPlace, formatTime, schedule, travel, proposeOrder, isTrip, persistableTrip } = model;
+const { PLACES, MAX_TRIP_DAYS, seedTrip, createTrip, appendTripDays, getPlaces, dayStartTime, dayStartPlace, formatTime, schedule, travel, proposeOrder, isTrip, persistableTrip } = model;
 let assertions = 0;
 function check(name, fn) { fn(); assertions += 1; console.log(`✓ ${name}`); }
 const activity = (aid, placeId, overrides = {}) => ({ aid, placeId, duration: 60, fixed: null, mode: 'walk', note: '', ...overrides });
@@ -20,6 +20,98 @@ check('seed and created trips survive strict JSON restoration', () => {
   assert.deepEqual(createTrip('Leap year', 'Tokyo', '2028-02-28', 3).days.map(d => d.date), ['Mon 28', 'Tue 29', 'Wed 1']);
   assert.throws(() => createTrip('Invalid', 'Tokyo', '2027-02-29', 3));
   assert.throws(() => createTrip('Invalid', 'Tokyo', '2027-05-14', 31));
+});
+
+check('adding days 4 and 5 preserves every existing plan and uses empty-day defaults', () => {
+  const trip = seedTrip();
+  Object.assign(trip.days[0], { startTime: 600, finishBy: 1200, startPlaceId: 'nijo' });
+  const original = structuredClone(trip);
+  Object.freeze(trip.days); Object.freeze(trip);
+  const extended = appendTripDays(trip, 2);
+  assert.notEqual(extended, trip);
+  assert.notEqual(extended.days, trip.days);
+  assert.deepEqual(trip, original);
+  assert.deepEqual(extended.days.slice(0, 3), original.days);
+  assert.deepEqual(extended.days.slice(3).map(d => [d.label, d.date]), [['Day 4', 'Mon 17'], ['Day 5', 'Tue 18']]);
+  assert.equal(extended.id, trip.id);
+  assert.equal(extended.startDate, trip.startDate);
+  assert.deepEqual(extended.ideas, trip.ideas);
+  assert.deepEqual(extended.customPlaces, trip.customPlaces);
+  for (const added of extended.days.slice(3)) {
+    assert.equal(added.title, 'A day to discover');
+    assert.equal(dayStartTime(added), 540);
+    assert.equal(dayStartPlace(added, getPlaces(extended)).id, 'hotel');
+    assert.equal(added.endMode, 'walk');
+    assert.equal(added.finishBy, null);
+    assert.deepEqual(added.items, []);
+  }
+  assert.notEqual(extended.days[3].items, extended.days[4].items);
+});
+
+check('appended dates cross leap days, month boundaries and years correctly', () => {
+  for (const [startDate, expected] of [
+    ['2028-02-28', ['Mon 28', 'Tue 29', 'Wed 1']],
+    ['2027-02-28', ['Sun 28', 'Mon 1', 'Tue 2']],
+    ['2027-04-30', ['Fri 30', 'Sat 1', 'Sun 2']],
+    ['2028-12-31', ['Sun 31', 'Mon 1', 'Tue 2']],
+  ]) {
+    const extended = appendTripDays(createTrip('Holiday', 'Kyoto', startDate, 1), 2);
+    assert.deepEqual(extended.days.map(d => d.date), expected);
+    assert.equal(isTrip(extended), true);
+  }
+});
+
+check('appended day IDs stay unique across imports and repeated additions', () => {
+  const trip = seedTrip();
+  trip.days[0].id = 'day-4';
+  trip.days[1].id = 'day-4-2';
+  trip.days[2].id = 'day-5';
+  const extended = appendTripDays(appendTripDays(trip, 1), 1);
+  assert.deepEqual(extended.days.map(d => d.id), ['day-4', 'day-4-2', 'day-5', 'day-4-3', 'day-5-2']);
+  assert.equal(new Set(extended.days.map(d => d.id)).size, extended.days.length);
+  assert.equal(isTrip(extended), true);
+});
+
+check('add-day validation enforces whole counts and the shared trip limit', () => {
+  const trip = seedTrip();
+  for (const count of [0, -1, 0.5, NaN, Infinity, '2', null, undefined]) {
+    assert.throws(() => appendTripDays(trip, count), /whole number/);
+  }
+  const full = appendTripDays(trip, MAX_TRIP_DAYS - trip.days.length);
+  assert.equal(full.days.length, MAX_TRIP_DAYS);
+  assert.equal(isTrip(full), true);
+  assert.throws(() => appendTripDays(full, 1), new RegExp(`up to ${MAX_TRIP_DAYS} days`));
+  assert.throws(() => appendTripDays(trip, MAX_TRIP_DAYS), /up to/);
+  assert.throws(() => createTrip('Holiday', 'Kyoto', '2027-01-01', MAX_TRIP_DAYS + 1), /Choose between/);
+  const invalid = structuredClone(full); invalid.days.push({ ...invalid.days.at(-1), id: 'over-limit' });
+  assert.equal(isTrip(invalid), false);
+});
+
+check('creation, extension and restoration reject calendar overflow and invalid sources', () => {
+  const lastDate = createTrip('Last day', 'Kyoto', '9999-12-31', 1);
+  assert.equal(isTrip(lastDate), true);
+  assert.throws(() => appendTripDays(lastDate, 1), /end date/);
+  assert.throws(() => createTrip('Overflow', 'Kyoto', '9999-12-31', 2), /end date/);
+  const invalidEnd = { ...lastDate, days: [...lastDate.days, { ...lastDate.days[0], id: 'next' }] };
+  assert.equal(isTrip(invalidEnd), false);
+  assert.throws(() => appendTripDays({ ...seedTrip(), startDate: '2027-02-29' }, 1), /invalid trip/);
+  assert.throws(() => appendTripDays({ ...seedTrip(), days: [] }, 1), /invalid trip/);
+});
+
+check('extended trips survive persisted and share-style JSON restoration with planning intact', () => {
+  const trip = seedTrip();
+  Object.assign(trip.days[0], { startTime: 600, finishBy: 1200, startPlaceId: 'nijo' });
+  trip.customPlaces.airport = { ...PLACES.hotel, id: 'airport', name: 'Provider airport', googlePlaceId: 'ChIJAirport', lat: 35, lng: 135 };
+  trip.ideas.push('airport');
+  const extended = appendTripDays(trip, 2);
+  const restored = JSON.parse(JSON.stringify(persistableTrip(extended)));
+  assert.equal(isTrip(restored), true);
+  assert.deepEqual(restored.days, extended.days);
+  assert.deepEqual(restored.ideas, extended.ideas);
+  assert.equal(restored.customPlaces.airport.googlePlaceId, 'ChIJAirport');
+  assert.equal(restored.customPlaces.airport.lat, undefined);
+  assert.equal(restored.customPlaces.airport.name, 'Saved place');
+  assert.deepEqual(appendTripDays(restored, 1).days.at(-1).label, 'Day 6');
 });
 
 check('legacy day setup restores with a 09:00 hotel departure without changing stored plans', () => {

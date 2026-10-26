@@ -67,6 +67,8 @@ export interface Trip {
   customPlaces: Record<string, Place>;
 }
 
+export const MAX_TRIP_DAYS = 30;
+
 export const CATEGORIES: Record<Category, { label: string; ink: string; tint: string }> = {
   attr: { label: 'Sight', ink: '#2C5A8C', tint: '#E3EBF5' },
   food: { label: 'Food & drink', ink: '#A24E17', tint: '#F8E7DA' },
@@ -140,32 +142,60 @@ const validDate = (value: unknown): value is string => typeof value === 'string'
   && datePattern.test(value) && Number.isFinite(Date.parse(`${value}T12:00:00Z`))
   && new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value;
 
+/** Work in UTC so adding days is independent of local daylight-saving changes. */
+function dateAt(startDate: string, index: number): Date | null {
+  if (!validDate(startDate) || !Number.isInteger(index) || index < 0) return null;
+  const date = new Date(`${startDate}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + index);
+  if (!Number.isFinite(date.getTime()) || !validDate(date.toISOString().slice(0, 10))) return null;
+  return date;
+}
+
+function emptyDay(index: number, date: Date, id = `day-${index + 1}`): Day {
+  return {
+    id, label: `Day ${index + 1}`,
+    date: `${date.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })} ${date.getUTCDate()}`,
+    title: 'A day to discover', endMode: 'walk', startTime: 540, finishBy: null,
+    startPlaceId: 'hotel', items: [],
+  };
+}
+
 let nextTrip = 0;
 export function createTrip(name: string, destination: string, startDate: string, dayCount: number): Trip {
   if (!name.trim() || !destination.trim() || name.length > 160 || destination.length > 160) {
     throw new Error('Give your trip a name and a destination (up to 160 characters each).');
   }
   if (!validDate(startDate)) throw new Error('Choose a valid start date.');
-  if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > 30) throw new Error('Choose between 1 and 30 days.');
-  const baseDate = new Date(`${startDate}T12:00:00Z`);
+  if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > MAX_TRIP_DAYS) throw new Error(`Choose between 1 and ${MAX_TRIP_DAYS} days.`);
+  if (!dateAt(startDate, dayCount - 1)) throw new Error('The trip end date must be a valid calendar date.');
   return {
     id: `trip-${Date.now().toString(36)}-${++nextTrip}`,
     name: name.trim(), destination: destination.trim(), startDate,
     timezone: /kyoto/i.test(destination) ? 'Asia/Tokyo' : 'UTC',
-    days: Array.from({ length: dayCount }, (_, index) => {
-      const date = new Date(baseDate);
-      date.setUTCDate(date.getUTCDate() + index);
-      return {
-        id: `day-${index + 1}`, label: `Day ${index + 1}`,
-        date: `${date.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })} ${date.getUTCDate()}`,
-        title: 'A day to discover', endMode: 'walk' as Mode, items: [],
-      };
-    }),
+    days: Array.from({ length: dayCount }, (_, index) => emptyDay(index, dateAt(startDate, index)!)),
     ideas: [],
     customPlaces: {
       hotel: { id: 'hotel', name: 'Your stay', cat: 'custom', x: 50, y: 72, area: destination.trim(), typical: '', blurb: 'Choose your hotel or another starting location. Each day starts and finishes here.' },
     },
   };
+}
+
+/** Extend a trip without changing any existing days, places or reservations. */
+export function appendTripDays(trip: Trip, count: number): Trip {
+  if (!Number.isInteger(count) || count < 1) throw new Error('Choose a whole number of days to add.');
+  if (!isTrip(trip)) throw new Error('Cannot add days to an invalid trip.');
+  if (trip.days.length + count > MAX_TRIP_DAYS) throw new Error(`A trip can have up to ${MAX_TRIP_DAYS} days.`);
+  if (!dateAt(trip.startDate, trip.days.length + count - 1)) throw new Error('The trip end date must be a valid calendar date.');
+  const usedIds = new Set(trip.days.map(day => day.id));
+  const added = Array.from({ length: count }, (_, offset) => {
+    const index = trip.days.length + offset;
+    const baseId = `day-${index + 1}`;
+    let id = baseId;
+    for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${baseId}-${suffix}`;
+    usedIds.add(id);
+    return emptyDay(index, dateAt(trip.startDate, index)!, id);
+  });
+  return { ...trip, days: [...trip.days, ...added] };
 }
 
 export function getPlaces(trip: Trip): Record<string, Place> {
@@ -391,8 +421,9 @@ export function isTrip(value: unknown): value is Trip {
   if (!isRecord(value) || !isId(value.id) || !isText(value.name, 160, true)
     || !isText(value.destination, 160, true) || !validDate(value.startDate)
     || !isText(value.timezone, 100, true) || !Array.isArray(value.days)
-    || value.days.length < 1 || value.days.length > 30 || !Array.isArray(value.ideas)
+    || value.days.length < 1 || value.days.length > MAX_TRIP_DAYS || !Array.isArray(value.ideas)
     || value.ideas.length > 500 || !isRecord(value.customPlaces)) return false;
+  if (!dateAt(value.startDate, value.days.length - 1)) return false;
   try { new Intl.DateTimeFormat('en', { timeZone: value.timezone }); } catch { return false; }
   const entries = Object.entries(value.customPlaces);
   if (entries.length > 500) return false;
