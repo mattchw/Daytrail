@@ -6,7 +6,7 @@ import './dashboard.css';
 type Props = {
   trips: Trip[];
   onOpen: (id: string) => void;
-  onCreate: (name: string, destination: string, startDate: string, days: number) => void;
+  onCreate: (name: string, destination: string, startDate: string, days: number, timezone: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
 };
@@ -75,6 +75,7 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
   const [destination, setDestination] = useState('');
   const [startDate, setStartDate] = useState(today);
   const [days, setDays] = useState('3');
+  const [timezone, setTimezone] = useState('');
   const [error, setError] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
@@ -83,6 +84,7 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
     setDestination('');
     setStartDate(today());
     setDays('3');
+    setTimezone('');
     setError('');
     dialog.current?.showModal();
   }
@@ -108,7 +110,9 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
       setError('Choose a start date and a trip length from 1 to 14 days.');
       return;
     }
-    onCreate(submittedName, submittedDestination, submittedStartDate, submittedDays);
+    const submittedTimezone=String(data.get('timezone')??'').trim();
+    try{new Intl.DateTimeFormat('en',{timeZone:submittedTimezone});}catch{setError('Choose the destination time zone, such as Asia/Tokyo.');return;}
+    onCreate(submittedName, submittedDestination, submittedStartDate, submittedDays, submittedTimezone);
     dialog.current?.close();
   }
 
@@ -174,8 +178,9 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
           <label className="dt-dash-field">Trip name<input ref={nameInput} name="name" value={name} onChange={event => setName(event.target.value)} autoFocus required maxLength={80} placeholder="e.g. Kyoto in spring" autoComplete="off" /></label>
           <label className="dt-dash-field">Destination<input ref={destinationInput} name="destination" value={destination} onChange={event => setDestination(event.target.value)} required maxLength={80} placeholder="e.g. Kyoto, Japan" autoComplete="off" /></label>
           <div className="dt-dash-form-row"><label className="dt-dash-field">Start date<input type="date" name="startDate" value={startDate} onChange={event => setStartDate(event.target.value)} onInput={event => setStartDate(event.currentTarget.value)} required /></label><label className="dt-dash-field">Number of days<input type="number" name="days" aria-label="Number of days" aria-describedby="dt-dash-days-hint" value={days} onChange={event => setDays(event.target.value)} required min="1" max="14" step="1" inputMode="numeric" /><span id="dt-dash-days-hint" className="dt-dash-field-hint">1–14 days</span></label></div>
+          <label className="dt-dash-field">Destination time zone<input name="timezone" value={timezone} onChange={event=>setTimezone(event.target.value)} list="create-timezones" placeholder="e.g. Asia/Tokyo" required autoComplete="off"/><datalist id="create-timezones">{['Asia/Tokyo','Europe/London','Europe/Paris','America/New_York','America/Los_Angeles','Asia/Hong_Kong','Asia/Singapore','Australia/Sydney','UTC'].map(zone=><option key={zone} value={zone}/>)}</datalist><span className="dt-dash-field-hint">Transit times use the destination's local time.</span></label>
           {error && <p className="dt-dash-form-error" role="alert">{error}</p>}
-          <p className="dt-dash-form-note"><MapPin size={15} aria-hidden="true" /> The demo includes places and a map for Kyoto. You can add custom places to any trip.</p>
+          <p className="dt-dash-form-note"><MapPin size={15} aria-hidden="true" /> Search real places with Google Maps, then choose your hotel or starting point.</p>
           <div className="dt-dash-form-actions"><button type="button" className="dt-dash-button dt-dash-secondary" onClick={() => dialog.current?.close()}>Cancel</button><button type="submit" className="dt-dash-button dt-dash-primary">Create trip <ArrowRight size={16} aria-hidden="true" /></button></div>
         </form>
       </dialog>

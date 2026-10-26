@@ -27,6 +27,9 @@ importers:
         specifier: ^19.2.0
         version: 19.3.1(react@19.3.1)
     devDependencies:
+      '@types/google.maps':
+        specifier: ^3.58.1
+        version: 3.66.7
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.5
@@ -490,6 +493,9 @@ packages:
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
+
+  '@types/google.maps@3.66.7':
+    resolution: {integrity: sha512-4EhLRkBtF5TMBAifddMeK+tn5MS6Sa6cMwrg4TbQiPlV4nU9IbKwHJ5csBfnpykNmXwqy+a9y0/38ZezOwtxmg==}
 
   '@types/node@22.20.5':
     resolution: {integrity: sha512-U2+DNr+wSjpsTS/wZGYHq7GcwfuSmKiKvoPvK22zwTlRhU91yOniN4qRR5KhIjvif7ysw/dz/hKmfDH0Ris4aA==}
@@ -1046,6 +1052,8 @@ snapshots:
       '@babel/types': 7.29.11
 
   '@types/estree@1.0.9': {}
+
+  '@types/google.maps@3.66.7': {}
 
   '@types/node@22.20.5':
     dependencies:

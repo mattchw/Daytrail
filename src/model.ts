@@ -1,4 +1,4 @@
-/** Pure prototype data and planning logic. Coordinates and journeys are illustrative. */
+/** Pure trip data and planning logic. Legacy x/y coordinates are illustrative only. */
 export type Mode = 'walk' | 'transit' | 'drive';
 export type Category = 'attr' | 'food' | 'custom';
 
@@ -12,6 +12,24 @@ export interface Place {
   typical: string;
   blurb: string;
   noTransit?: boolean;
+  lat?: number;
+  lng?: number;
+  googlePlaceId?: string;
+  googleMapsURI?: string;
+  attributions?: { provider: string; providerURI?: string }[];
+  /** User-entered content survives linking a custom place to Google. */
+  userLabel?: string;
+  userNotes?: string;
+}
+
+export interface Journey {
+  min: number | null;
+  km: string;
+  mode: Mode;
+  status?: 'ready' | 'loading' | 'unavailable';
+  reason?: string;
+  path?: { lat: number; lng: number }[];
+  warning?: string;
 }
 
 export interface Activity {
@@ -139,13 +157,38 @@ export function createTrip(name: string, destination: string, startDate: string,
     }),
     ideas: [],
     customPlaces: {
-      hotel: { id: 'hotel', name: 'Your stay', cat: 'custom', x: 50, y: 72, area: destination.trim(), typical: '', blurb: 'Your sample starting point. Map positions and travel times in this prototype are illustrative.' },
+      hotel: { id: 'hotel', name: 'Your stay', cat: 'custom', x: 50, y: 72, area: destination.trim(), typical: '', blurb: 'Choose your hotel or another starting location. Each day starts and finishes here.' },
     },
   };
 }
 
 export function getPlaces(trip: Trip): Record<string, Place> {
   return { ...PLACES, ...trip.customPlaces };
+}
+
+/** Keep provider IDs and user planning data; fetch Google place details again per session. */
+export function persistableTrip(trip: Trip): Trip {
+  return {
+    ...trip,
+    days: trip.days.map(day => ({ ...day, items: day.items.map(item => ({ ...item })) })),
+    ideas: [...trip.ideas],
+    customPlaces: Object.fromEntries(Object.entries(trip.customPlaces).map(([id, place]) => [
+      id,
+      place.googlePlaceId ? {
+        id,
+        name: id === 'hotel' ? 'Your stay' : 'Saved place',
+        cat: place.cat,
+        x: 50,
+        y: 50,
+        area: '',
+        typical: place.typical,
+        blurb: '',
+        googlePlaceId: place.googlePlaceId,
+        ...(place.userLabel !== undefined ? { userLabel: place.userLabel } : {}),
+        ...(place.userNotes !== undefined ? { userNotes: place.userNotes } : {}),
+      } : { ...place },
+    ])),
+  };
 }
 
 export function formatTime(min: number): string {
@@ -164,7 +207,7 @@ export function formatDuration(min: number): string {
 }
 
 /** Illustrative straight-line estimates only; these are not live directions. */
-export function travel(a: Place, b: Place, mode: Mode): { min: number | null; km: string; mode: Mode } {
+export function travel(a: Place, b: Place, mode: Mode): Journey {
   const distance = Math.hypot(a.x - b.x, a.y - b.y);
   const min = distance < 0.5 ? 0
     : mode === 'walk' ? Math.max(2, Math.round(distance * 1.45))
@@ -176,7 +219,7 @@ export function travel(a: Place, b: Place, mode: Mode): { min: number | null; km
 export interface ScheduleRow {
   it: Activity;
   pl: Place;
-  leg: ReturnType<typeof travel>;
+  leg: Journey;
   /** Earliest arrival when approx is true. */
   arrive: number;
   /** Booked start and end stay visible even when arrival is late. */
@@ -189,9 +232,9 @@ export interface ScheduleRow {
   approx: boolean;
 }
 
-export function schedule(day: Day, places: Record<string, Place>): {
+export function schedule(day: Day, places: Record<string, Place>, legs?: Record<string, Journey>): {
   rows: ScheduleRow[];
-  endLeg: ReturnType<typeof travel>;
+  endLeg: Journey;
   travel: number;
   unknown: number;
   late: number;
@@ -201,6 +244,17 @@ export function schedule(day: Day, places: Record<string, Place>): {
 } {
   const hotel = places.hotel;
   if (!hotel) throw new Error('A trip needs a starting point.');
+  const journey = (key: string, from: Place, to: Place, mode: Mode): Journey => {
+    if (legs === undefined) return travel(from, to, mode);
+    const leg = Object.hasOwn(legs, key) ? legs[key] : undefined;
+    if (!leg || leg.mode !== mode) return { min: null, km: '—', mode, status: 'loading', reason: 'Calculating this journey.' };
+    // Loading, unavailable or invalid values must never enter the itinerary as known minutes.
+    if (leg.status === 'loading' || leg.status === 'unavailable') return { ...leg, min: null };
+    if (leg.min !== null && (!Number.isFinite(leg.min) || leg.min < 0)) {
+      return { min: null, km: '—', mode, status: 'unavailable', reason: 'A travel estimate is unavailable.' };
+    }
+    return leg;
+  };
   let time = 540;
   let previous = hotel;
   let travelMinutes = 0;
@@ -211,7 +265,7 @@ export function schedule(day: Day, places: Record<string, Place>): {
   const rows = day.items.map((it): ScheduleRow => {
     const pl = places[it.placeId];
     if (!pl) throw new Error(`Unknown place: ${it.placeId}`);
-    const leg = travel(previous, pl, it.mode);
+    const leg = journey(it.aid, previous, pl, it.mode);
     if (leg.min === null) { unknown += 1; uncertain = true; }
     else travelMinutes += leg.min;
     const arrive = time + (leg.min ?? 0);
@@ -230,16 +284,22 @@ export function schedule(day: Day, places: Record<string, Place>): {
     wait += rowWait;
     return row;
   });
-  const endLeg = travel(previous, hotel, day.endMode);
+  const endLeg: Journey = day.items.length === 0
+    ? { min: 0, km: '0.0', mode: day.endMode, status: 'ready' }
+    : journey('return', previous, hotel, day.endMode);
   if (endLeg.min === null) { unknown += 1; uncertain = true; }
   else travelMinutes += endLeg.min;
   return { rows, endLeg, travel: travelMinutes, unknown, late, wait, finish: time + (endLeg.min ?? 0), finishApprox: uncertain };
 }
 
 /** Enumerates at most 8! alternatives; bookings split the day into uncrossable runs. */
-export function proposeOrder(day: Day, places: Record<string, Place>): {
+export function proposeOrder(day: Day, places: Record<string, Place>, legs?: Record<string, Journey>): {
   items: Activity[]; before: number; after: number; saved: number;
 } | null {
+  // Incoming legs only describe the current order. Reordering real places needs new route
+  // requests; the sample straight-line estimator cannot establish an improvement.
+  if (legs !== undefined || [places.hotel, ...day.items.map(item => places[item.placeId])]
+    .some(place => place && (place.googlePlaceId !== undefined || place.lat !== undefined || place.lng !== undefined))) return null;
   const flexibleCount = day.items.filter(item => item.fixed === null).length;
   if (day.endMode === 'transit' || day.items.some(item => item.mode === 'transit')
     || flexibleCount < 2 || flexibleCount > 8) return null;
@@ -300,6 +360,17 @@ const isId = (value: unknown): value is string => typeof value === 'string'
 const isMode = (value: unknown): value is Mode => value === 'walk' || value === 'drive' || value === 'transit';
 const isInteger = (value: unknown, min: number, max: number): value is number => typeof value === 'number'
   && Number.isInteger(value) && value >= min && value <= max;
+const isCoordinate = (value: unknown, min: number, max: number): value is number => typeof value === 'number'
+  && Number.isFinite(value) && value >= min && value <= max;
+const isHttpsURL = (value: unknown): value is string => {
+  if (!isText(value, 2048, true) || value.trim() !== value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  } catch { return false; }
+};
+const isGooglePlaceId = (value: unknown): value is string => typeof value === 'string'
+  && /^[a-zA-Z0-9_-]{1,512}$/.test(value);
 
 /** Validate untrusted saved/exported JSON before using any nested fields. */
 export function isTrip(value: unknown): value is Trip {
@@ -318,6 +389,17 @@ export function isTrip(value: unknown): value is Trip {
       || typeof place.y !== 'number' || !Number.isFinite(place.y) || place.y < 0 || place.y > 100
       || !isText(place.area, 300) || !isText(place.typical, 100) || !isText(place.blurb, 4000)
       || (place.noTransit !== undefined && typeof place.noTransit !== 'boolean')) return false;
+    if ((place.lat !== undefined || place.lng !== undefined)
+      && (!isCoordinate(place.lat, -90, 90) || !isCoordinate(place.lng, -180, 180))) return false;
+    if ((place.googlePlaceId !== undefined && !isGooglePlaceId(place.googlePlaceId))
+      || (place.googleMapsURI !== undefined && !isHttpsURL(place.googleMapsURI))
+      || (place.userLabel !== undefined && !isText(place.userLabel, 160))
+      || (place.userNotes !== undefined && !isText(place.userNotes, 4000))) return false;
+    if (place.attributions !== undefined && (!Array.isArray(place.attributions)
+      || place.attributions.length > 100
+      || place.attributions.some(attribution => !isRecord(attribution)
+        || !isText(attribution.provider, 300, true)
+        || (attribution.providerURI !== undefined && !isHttpsURL(attribution.providerURI))))) return false;
     // The starting point can be customised; sample place IDs cannot be overwritten on import.
     if (id !== 'hotel' && Object.hasOwn(PLACES, id)) return false;
   }

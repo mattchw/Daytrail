@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties, PointerEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { CATEGORIES, formatDuration, formatTime } from '../model';
 import type { Activity, Day, Place, schedule as computeSchedule } from '../model';
+import { GOOGLE_MAP_ID, loadGoogleMaps } from '../googleMaps';
 import './map.css';
 
 type Props = {
@@ -18,19 +19,32 @@ type Props = {
   proposed: Activity[] | null;
   onOpenDetails?: () => void;
   destination?: string;
+  onChooseBase?: () => void;
+  onLocatePlace?: (id: string) => void;
+  loadingRoutes?: boolean;
 };
 
-type Viewport = { x: number; y: number; zoom: number };
-const FULL_VIEW: Viewport = { x: 50, y: 50, zoom: 1 };
-const LABELS = [
-  { x: 9, y: 30, name: 'Arashiyama' },
-  { x: 29, y: 8, name: 'Kita' },
-  { x: 39, y: 54, name: 'Downtown' },
-  { x: 77, y: 66, name: 'Higashiyama' },
-  { x: 69, y: 94, name: 'Fushimi' },
-  { x: 62, y: 17, name: 'Kamo River', river: true },
-];
-
+type Coordinate = { lat: number; lng: number };
+function coordinate(place?: Place | null): Coordinate | null {
+  return place && typeof place.lat === 'number' && typeof place.lng === 'number'
+    && Number.isFinite(place.lat) && Number.isFinite(place.lng)
+    && Math.abs(place.lat) <= 90 && Math.abs(place.lng) <= 180
+    ? { lat: place.lat, lng: place.lng } : null;
+}
+function safeLink(url?: string) {
+  try { const parsed = new URL(url ?? ''); return parsed.protocol === 'https:' ? parsed.href : undefined; }
+  catch { return undefined; }
+}
+function PlaceCredits({ place }: { place: Place }) {
+  const mapsLink = safeLink(place.googleMapsURI);
+  return <div className="dt-map-place-credits">
+    {mapsLink && <a href={mapsLink} target="_blank" rel="noreferrer">View on Google Maps ↗</a>}
+    {place.attributions?.map((credit, index) => {
+      const href = safeLink(credit.providerURI);
+      return <span key={`${credit.provider}-${index}`}>{href ? <a href={href} target="_blank" rel="noreferrer">{credit.provider}</a> : credit.provider}</span>;
+    })}
+  </div>;
+}
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
     plus: <path d="M12 5v14M5 12h14" />,
@@ -46,134 +60,259 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-
 function RouteSample({ mode }: { mode: string }) {
   return <svg width="24" height="6" viewBox="0 0 24 6" aria-hidden="true"><path d="M2 3h20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={mode === 'walk' ? '.1 5' : mode === 'transit' ? '6 4' : undefined} /></svg>;
 }
 
-export default function MapPanel({ day, places, schedule, selected, onSelect, previewPlace, onClosePreview, onSavePlace, onAddPlace, placeStatus, proposed, onOpenDetails, destination = 'Kyoto' }: Props) {
-  const [viewport, setViewport] = useState<Viewport>(FULL_VIEW);
-  const [panning, setPanning] = useState(false);
+export default function MapPanel({ day, places, schedule, selected, onSelect, previewPlace, onClosePreview, onSavePlace, onAddPlace, placeStatus, onOpenDetails, destination = 'your destination', onChooseBase, onLocatePlace, loadingRoutes = false }: Props) {
   const surface = useRef<HTMLDivElement>(null);
-  const pan = useRef<{ startX: number; startY: number; original: Viewport; width: number; height: number } | null>(null);
-  const hotel = places.hotel ?? { x: 50, y: 72, name: 'Hotel' };
+  const map = useRef<google.maps.Map | null>(null);
+  const maps = useRef<typeof google.maps | null>(null);
+  const markerLibrary = useRef<google.maps.MarkerLibrary | null>(null);
+  const markers = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const lines = useRef<google.maps.Polyline[]>([]);
+  const latest = useRef({ onSelect, onChooseBase });
+  latest.current = { onSelect, onChooseBase };
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [zoom, setZoom] = useState(2);
+  const hotel = places.hotel;
   const selectedIndex = schedule.rows.findIndex(row => row.it.aid === selected);
   const activeIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const active = schedule.rows[activeIndex];
   const selectedRow = selectedIndex >= 0 ? schedule.rows[selectedIndex] : null;
   const previewStatus = previewPlace ? placeStatus(previewPlace.id) : '';
   const previewPlanned = !!previewStatus && !/idea|saved/i.test(previewStatus);
-  const half = 50 / viewport.zoom;
-  const viewBox = `${viewport.x - half} ${viewport.y - half} ${half * 2} ${half * 2}`;
-  const isKyoto = /kyoto/i.test(destination);
-  const labels = isKyoto ? LABELS : [
-    { x: 29, y: 18, name: 'North district' },
-    { x: 39, y: 54, name: 'City centre' },
-    { x: 77, y: 66, name: 'East district' },
-    { x: 62, y: 17, name: 'River', river: true },
-  ];
-
-  useEffect(() => { setViewport(FULL_VIEW); }, [day.id]);
-
-  function project(place: { x: number; y: number }): CSSProperties {
-    return { left: `${(place.x - viewport.x) * viewport.zoom + 50}%`, top: `${(place.y - viewport.y) * viewport.zoom + 50}%` };
-  }
-  function zoomBy(delta: number) {
-    setViewport(view => ({ ...view, zoom: Math.min(3, Math.max(1, +(view.zoom + delta).toFixed(2))) }));
-  }
-  function fitRoute() {
-    const points = [hotel, ...schedule.rows.map(row => row.pl), ...(previewPlace ? [previewPlace] : [])];
-    const xs = points.map(point => point.x), ys = points.map(point => point.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    const zoom = Math.min(2.5, Math.max(1, 64 / Math.max(maxX - minX, maxY - minY, 25)));
-    setViewport({ x: (minX + maxX) / 2, y: (minY + maxY) / 2 + 3 / zoom, zoom });
-  }
-  function startPan(event: PointerEvent<HTMLDivElement>) {
-    if ((event.target as Element).closest('button, [role="dialog"], a')) return;
-    const bounds = surface.current?.getBoundingClientRect();
-    if (!bounds) return;
-    pan.current = { startX: event.clientX, startY: event.clientY, original: viewport, width: bounds.width, height: bounds.height };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setPanning(true);
-  }
-  function movePan(event: PointerEvent<HTMLDivElement>) {
-    if (!pan.current) return;
-    const { startX, startY, original, width, height } = pan.current;
-    const x = original.x - (event.clientX - startX) / width * 100 / original.zoom;
-    const y = original.y - (event.clientY - startY) / height * 100 / original.zoom;
-    setViewport({ ...original, x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) });
-  }
-  function stopPan() { pan.current = null; setPanning(false); }
-  function goToStop(delta: number) {
-    if (!schedule.rows.length) return;
-    onSelect(schedule.rows[(activeIndex + delta + schedule.rows.length) % schedule.rows.length].it.aid);
-  }
-  const routePoints = [hotel, ...schedule.rows.map(row => row.pl), hotel];
-  const proposedPoints = proposed ? [hotel, ...proposed.map(item => places[item.placeId]).filter(Boolean), hotel] : [];
+  const missingPlaces = schedule.rows.filter(row => !coordinate(row.pl));
+  const pointKey = [hotel, ...schedule.rows.map(row => row.pl), previewPlace].filter(Boolean).map(place => `${place!.id}:${place!.lat ?? ''}:${place!.lng ?? ''}`).join('|');
+  const journeyLegs = [...schedule.rows.map(row => row.leg), schedule.endLeg];
+  const chooseBaseEnabled = !!onChooseBase;
+  const markerKey = JSON.stringify([hotel, schedule.rows.map(row => [row.it.aid, row.pl.id, row.pl.name, row.pl.cat, row.pl.lat, row.pl.lng, row.start]), previewPlace]);
+  const routeKey = journeyLegs.map(leg => `${leg.mode}:${leg.status}:${leg.path?.map(point => `${point.lat},${point.lng}`).join(';') ?? ''}`).join('|');
+  const points = useRef<Coordinate[]>([]);
+  points.current = [hotel, ...schedule.rows.map(row => row.pl), previewPlace].flatMap(place => {
+    const point = coordinate(place); return point ? [point] : [];
+  }).concat(journeyLegs.flatMap(leg => leg.status === 'ready' && leg.path ? leg.path : []));
+  const warnings = [...new Set(journeyLegs.map(leg => leg.warning).filter((warning): warning is string => !!warning))];
+  const sourceCredits = [...new Map([hotel, ...schedule.rows.map(row => row.pl), previewPlace].flatMap(place => place?.attributions ?? []).map(credit => [`${credit.provider}:${credit.providerURI ?? ''}`, credit])).values()];
   const activeTime = active ? `${active.approx && active.it.fixed === null ? '≈ ' : ''}${formatTime(active.start)}–${formatTime(active.end)}${active.it.fixed != null ? ' · booked' : ''}` : '';
 
+  function fitRoute() {
+    const instance = map.current, api = maps.current;
+    if (!instance || !api || !points.current.length || !surface.current?.clientWidth) return;
+    const bounds = new api.LatLngBounds();
+    points.current.forEach(point => bounds.extend(point));
+    if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
+      instance.setCenter(points.current[0]); instance.setZoom(15);
+    } else {
+      instance.fitBounds(bounds, { top: 55, right: 65, bottom: 45, left: 35 });
+    }
+  }
+
+  useEffect(() => {
+    let disposed = false;
+    let authFailed = false;
+    let resize: ResizeObserver | undefined;
+    let zoomListener: google.maps.MapsEventListener | undefined;
+    setReady(false); setError('');
+    function authError(event: Event) {
+      authFailed = true;
+      const detail = (event as CustomEvent<string | { message: string }>).detail;
+      setError(typeof detail === 'string' ? detail : detail?.message || 'Google Maps could not authorise this website. Check the API key and billing settings, then reload.');
+      setReady(false);
+    }
+    window.addEventListener('daytrail-maps-error', authError);
+    void loadGoogleMaps().then(async api => {
+      const [mapLibrary, markerApi] = await Promise.all([
+        api.importLibrary('maps') as Promise<google.maps.MapsLibrary>,
+        api.importLibrary('marker') as Promise<google.maps.MarkerLibrary>,
+      ]);
+      if (disposed || authFailed || !surface.current) return;
+      maps.current = api;
+      markerLibrary.current = markerApi;
+      const instance = new mapLibrary.Map(surface.current, {
+        mapId: GOOGLE_MAP_ID,
+        center: points.current[0] ?? { lat: 20, lng: 0 },
+        zoom: points.current.length ? 12 : 2,
+        minZoom: 2, maxZoom: 21,
+        disableDefaultUI: true,
+        clickableIcons: false,
+        gestureHandling: 'greedy',
+        keyboardShortcuts: true,
+        tilt: 0,
+      });
+      map.current = instance;
+      zoomListener = instance.addListener('zoom_changed', () => setZoom(instance.getZoom() ?? 2));
+      let wasVisible = !!surface.current.clientWidth;
+      resize = new ResizeObserver(() => {
+        if (!surface.current?.clientWidth || !surface.current.clientHeight) { wasVisible = false; return; }
+        api.event.trigger(instance, 'resize');
+        if (!wasVisible) fitRoute();
+        wasVisible = true;
+      });
+      resize.observe(surface.current);
+      setReady(true);
+    }).catch(() => {
+      if (!disposed && !authFailed) { setError('Google Maps could not load. Check your connection and the map configuration, then try again.'); setReady(false); }
+    });
+    return () => {
+      disposed = true;
+      resize?.disconnect(); zoomListener?.remove();
+      window.removeEventListener('daytrail-maps-error', authError);
+      markers.current.forEach(marker => { marker.map = null; }); markers.current = [];
+      lines.current.forEach(line => line.setMap(null)); lines.current = [];
+      map.current = null;
+    };
+  }, [attempt]);
+
+  useEffect(() => {
+    if (!ready || !map.current || !markerLibrary.current) return;
+    markers.current.forEach(marker => { marker.map = null; });
+    markers.current = [];
+    const { AdvancedMarkerElement } = markerLibrary.current;
+    function addMarker(place: Place, content: HTMLElement, title: string, zIndex: number, activityId?: string) {
+      const position = coordinate(place);
+      if (!position || !map.current) return;
+      const marker = new AdvancedMarkerElement({ map: map.current, position, title, zIndex });
+      marker.append(content);
+      if (activityId) marker.dataset.activityId = activityId;
+      markers.current.push(marker);
+    }
+    if (coordinate(hotel)) {
+      const content = document.createElement(onChooseBase ? 'button' : 'div');
+      content.className = 'dt-map-hotel';
+      content.textContent = '⌂';
+      content.setAttribute('aria-label', `${hotel.name} · start and end of day${onChooseBase ? '. Change hotel' : ''}`);
+      content.title = `${hotel.name} · start and end of day`;
+      if (onChooseBase) content.addEventListener('click', () => latest.current.onChooseBase?.());
+      addMarker(hotel, content, hotel.name, 5);
+    }
+    schedule.rows.forEach((row, index) => {
+      const content = document.createElement('button');
+      content.type = 'button';
+      content.className = `dt-map-pin${row.it.aid === selected ? ' is-selected' : ''}`;
+      content.style.setProperty('--pin-color', CATEGORIES[row.pl.cat].ink);
+      content.textContent = String(index + 1);
+      content.setAttribute('aria-label', `Stop ${index + 1}: ${row.pl.name}, ${formatTime(row.start)}`);
+      content.setAttribute('aria-pressed', String(row.it.aid === selected));
+      content.addEventListener('click', () => latest.current.onSelect(row.it.aid));
+      addMarker(row.pl, content, row.pl.name, row.it.aid === selected ? 20 : 10, row.it.aid);
+    });
+    if (previewPlace) {
+      const content = document.createElement('div');
+      content.className = 'dt-map-preview-pin'; content.textContent = '+';
+      content.setAttribute('aria-label', previewPlace.name);
+      addMarker(previewPlace, content, previewPlace.name, 30);
+    }
+    return () => { markers.current.forEach(marker => { marker.map = null; }); markers.current = []; };
+  }, [ready, markerKey, chooseBaseEnabled]);
+
+  // Keep the focused marker in the DOM when selection changes via keyboard.
+  useEffect(() => {
+    markers.current.forEach(marker => {
+      if (!marker.dataset.activityId) return;
+      const button = marker.querySelector('button');
+      const isSelected = marker.dataset.activityId === selected;
+      button?.classList.toggle('is-selected', isSelected);
+      button?.setAttribute('aria-pressed', String(isSelected));
+      marker.zIndex = isSelected ? 20 : 10;
+    });
+  }, [ready, markerKey, selected]);
+
+  useEffect(() => {
+    if (!ready || !map.current || !maps.current) return;
+    const api = maps.current;
+    lines.current.forEach(line => line.setMap(null));
+    lines.current = [];
+    journeyLegs.forEach(leg => {
+      if (leg.status !== 'ready' || !leg.path || leg.path.length < 2) return;
+      const color = leg.mode === 'transit' ? '#466d94' : '#0e6e68';
+      const line = new api.Polyline({
+        map: map.current, path: leg.path, clickable: false, geodesic: false,
+        strokeColor: color, strokeOpacity: leg.mode === 'drive' ? .9 : 0,
+        strokeWeight: 5, zIndex: 1,
+        icons: leg.mode === 'drive' ? undefined : [{
+          icon: leg.mode === 'walk'
+            ? { path: api.SymbolPath.CIRCLE, fillColor: color, fillOpacity: 1, strokeOpacity: 0, scale: 2.5 }
+            : { path: 'M 0,-1 0,1', strokeColor: color, strokeOpacity: 1, strokeWeight: 4, scale: 3 },
+          offset: '0', repeat: leg.mode === 'walk' ? '11px' : '18px',
+        }],
+      });
+      lines.current.push(line);
+    });
+    return () => { lines.current.forEach(line => line.setMap(null)); lines.current = []; };
+  }, [ready, routeKey]);
+
+  useEffect(() => { if (ready) fitRoute(); }, [ready, day.id, pointKey, routeKey]);
+  const previousSelection = useRef({ dayId: day.id, selected });
+  useEffect(() => {
+    const previous = previousSelection.current;
+    previousSelection.current = { dayId: day.id, selected };
+    if (!ready || previous.dayId !== day.id || previous.selected === selected) return;
+    const point = coordinate(selectedRow?.pl);
+    if (point) map.current?.panTo(point);
+  }, [ready, selected, day.id, selectedRow?.pl.lat, selectedRow?.pl.lng]);
+  useEffect(() => {
+    const point = coordinate(previewPlace);
+    if (ready && point && map.current) {
+      map.current.panTo(point);
+      if ((map.current.getZoom() ?? 2) < 12) map.current.setZoom(14);
+    }
+  }, [ready, previewPlace?.id, previewPlace?.lat, previewPlace?.lng]);
+
+  function zoomBy(delta: number) {
+    if (map.current) map.current.setZoom(Math.max(2, Math.min(21, (map.current.getZoom() ?? 12) + delta)));
+  }
+  function goToStop(delta: number) {
+    if (schedule.rows.length) onSelect(schedule.rows[(activeIndex + delta + schedule.rows.length) % schedule.rows.length].it.aid);
+  }
+  const pendingPlace = selectedRow && !coordinate(selectedRow.pl) ? selectedRow.pl : missingPlaces[0]?.pl;
+
   return <section className="dt-map" aria-label="Itinerary map">
-    <div className={`dt-map-surface${panning ? ' is-panning' : ''}`} ref={surface} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan}>
-      <svg className="dt-map-geography" viewBox={viewBox} preserveAspectRatio="none" aria-hidden="true">
-        <defs><pattern id="daytrail-map-grid" width="7" height="7" patternUnits="userSpaceOnUse"><path d="M7 0H0V7" fill="none" stroke="#e1dacb" strokeWidth=".16" /></pattern></defs>
-        <rect x="-100" y="-100" width="300" height="300" fill="#ece7dc" />
-        <rect x="-100" y="-100" width="300" height="300" fill="url(#daytrail-map-grid)" />
-        <path d="M80-20H120V120H86C82 82 88 64 82 46C78 30 84 14 80-20Z" fill="#d5e0ca" />
-        <path d="M-20-20H16C12 14 20 26 14 38L0 54H-20Z" fill="#d5e0ca" />
-        <rect x="47" y="21" width="9" height="10" rx="1.2" fill="#d9e4cd" />
-        <path d="M60-20C58 18 58 36 57.5 52C57 70 55 86 50 120" fill="none" stroke="#b6d0d9" strokeWidth="1.65" />
-        <path d="M-6 0C3 26 9 42 12 62C14 80 19 100 25 120" fill="none" stroke="#b6d0d9" strokeWidth="1.8" />
-        <path d="M-10 74L110 70M-10 49L110 47" fill="none" stroke="#d5cebf" strokeWidth=".55" />
-        <path d="M22-10L27 110M72-10L65 110" fill="none" stroke="#dcd4c5" strokeWidth=".45" />
-        {routePoints.slice(1).map((point, index) => {
-          const previous = routePoints[index];
-          const mode = schedule.rows[index]?.it.mode ?? day.endMode;
-          return <path key={`leg-${index}`} d={`M${previous.x} ${previous.y}L${point.x} ${point.y}`} fill="none" stroke="#0e6e68" strokeWidth={mode === 'drive' ? '.6' : '.55'} strokeDasharray={mode === 'walk' ? '.1 1.15' : mode === 'transit' ? '2.1 1.3' : undefined} strokeLinecap="round" opacity=".85" />;
-        })}
-        {proposedPoints.length > 1 && <polyline points={proposedPoints.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#b4541a" strokeWidth=".6" strokeDasharray="2 1.3" strokeLinecap="round" />}
-      </svg>
-
-      <div className="dt-map-labels" aria-hidden="true">{labels.map(label => <span key={label.name} className={label.river ? 'dt-map-label is-river' : 'dt-map-label'} style={project(label)}>{label.name}</span>)}</div>
-      <div className="dt-map-hotel" style={project(hotel)} title="Hotel · start and end of day"><Icon name="home" size={17} /><span>Hotel</span></div>
-
-      {previewPlace && <span className="dt-map-preview-pin" style={project(previewPlace)} aria-hidden="true"><Icon name="plus" size={16} /></span>}
-      {schedule.rows.map((row, index) => <button key={row.it.aid} className={`dt-map-pin${row.it.aid === selected ? ' is-selected' : ''}${index === activeIndex ? ' is-mobile-active' : ''}`} style={{ ...project(row.pl), '--pin-color': CATEGORIES[row.pl.cat].ink } as CSSProperties} aria-label={`Stop ${index + 1}: ${row.pl.name}, ${formatTime(row.start)}`} aria-pressed={row.it.aid === selected} title={row.pl.name} onClick={() => onSelect(row.it.aid)}>{index + 1}</button>)}
-
-      {selectedRow && !previewPlace && <div className={`dt-map-bubble${(selectedRow.pl.x - viewport.x) * viewport.zoom + 50 > 58 ? ' is-left' : ''}`} style={project(selectedRow.pl)}>
-        <strong>{selectedRow.pl.name}</strong><span>{selectedRow.approx && selectedRow.it.fixed === null ? '≈ ' : ''}{formatTime(selectedRow.start)}–{formatTime(selectedRow.end)}{selectedRow.it.fixed != null ? ' · booked' : ''}</span>
-      </div>}
-
-      <div className="dt-map-title"><Icon name="compass" size={18} /><div><strong>{day.label} <span>·</span> {day.title}</strong><span>{schedule.rows.length} stops <i>·</i> {formatDuration(schedule.travel)} {schedule.unknown ? 'known travel · some estimates unavailable' : 'travel'}</span></div></div>
-
-      <div className="dt-map-controls" aria-label="Map controls">
-        <button onClick={fitRoute} title="Fit all stops" aria-label="Fit all stops"><Icon name="fit" /></button>
-        <span />
-        <button onClick={() => zoomBy(.25)} disabled={viewport.zoom >= 3} title="Zoom in" aria-label="Zoom in"><Icon name="plus" /></button>
-        <button onClick={() => zoomBy(-.25)} disabled={viewport.zoom <= 1} title="Zoom out" aria-label="Zoom out"><Icon name="minus" /></button>
-        <button className="dt-map-reset" onClick={() => setViewport(FULL_VIEW)} title="Reset map view" aria-label="Reset map view">N<span>↑</span></button>
+    <div className="dt-map-surface">
+      <div className="dt-map-heading"><Icon name="compass" size={18} /><div><strong>{day.label} <span>·</span> {day.title}</strong><span>{schedule.rows.length} stops <i>·</i> {loadingRoutes ? 'Updating journeys…' : `${formatDuration(schedule.travel)} ${schedule.unknown ? 'known travel' : 'travel'}`}</span></div><span className="dt-map-live-label">Google Maps</span></div>
+      <div className="dt-map-viewport">
+        <div className="dt-map-google" ref={surface} aria-label={`Map of your itinerary in ${destination}`} />
+        {!ready && <div className="dt-map-loading" role={error ? 'alert' : 'status'}>
+          <Icon name="compass" size={28} /><strong>{error ? 'Map unavailable' : 'Opening your map…'}</strong>
+          <p>{error || 'Loading Google Maps and your saved places.'}</p>
+          {error && <button className="dt-map-primary" onClick={() => setAttempt(value => value + 1)}>Try again</button>}
+        </div>}
+        {ready && <>
+          <div className="dt-map-controls" aria-label="Map controls">
+            <button onClick={fitRoute} disabled={!points.current.length} title="Fit all stops" aria-label="Fit all stops"><Icon name="fit" /></button><span />
+            <button onClick={() => zoomBy(1)} disabled={zoom >= 21} title="Zoom in" aria-label="Zoom in"><Icon name="plus" /></button>
+            <button onClick={() => zoomBy(-1)} disabled={zoom <= 2} title="Zoom out" aria-label="Zoom out"><Icon name="minus" /></button>
+            <button className="dt-map-reset" onClick={() => { map.current?.setHeading(0); map.current?.setTilt(0); fitRoute(); }} title="Reset map view" aria-label="Reset map view">N<span>↑</span></button>
+          </div>
+          {!previewPlace && (!coordinate(hotel) || pendingPlace) && <div className="dt-map-location-help">
+            {!coordinate(hotel) ? <><Icon name="home" size={17} /><div><strong>Where are you staying?</strong><span>Set your base to complete each day’s route.</span></div>{onChooseBase && <button onClick={onChooseBase}>Choose hotel</button>}</> : pendingPlace ? <><Icon name="compass" size={17} /><div><strong>{pendingPlace.name}</strong><span>{missingPlaces.length} {missingPlaces.length === 1 ? 'stop needs a location' : 'stops need locations'}.</span></div>{onLocatePlace && <button onClick={() => onLocatePlace(pendingPlace.id)}>Locate stop</button>}</> : null}
+          </div>}
+          {selectedRow && coordinate(selectedRow.pl) && !previewPlace && <div className="dt-map-selected"><span className="dt-map-stop-number">{selectedIndex + 1}</span><div><strong>{selectedRow.pl.name}</strong><span>{activeTime}</span><PlaceCredits place={selectedRow.pl} /></div></div>}
+        </>}
       </div>
-
+      <div className="dt-map-bottom">
+        <div className="dt-map-legend" aria-label="Route legend"><span><RouteSample mode="walk" />Walk</span><span><RouteSample mode="transit" />Transit</span><span><RouteSample mode="drive" />Drive</span></div>
+        <span className="dt-map-disclaimer" role="status">{loadingRoutes ? 'Updating routes…' : schedule.unknown ? 'Some journeys are unavailable' : schedule.rows.length ? 'Routes follow your itinerary' : 'Add places to plan your route'}</span>
+      </div>
+      {!!sourceCredits.length && <div className="dt-map-provider-credits">{sourceCredits.map((credit, index) => <span key={`${credit.provider}-${index}`}>{safeLink(credit.providerURI) ? <a href={safeLink(credit.providerURI)} target="_blank" rel="noreferrer">{credit.provider}</a> : credit.provider}</span>)}</div>}
+      {!!warnings.length && <div className="dt-map-route-warnings">{warnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
       {previewPlace && <div className="dt-map-place-preview" role="dialog" aria-label={previewPlace.name} onKeyDown={event => { if (event.key === 'Escape') onClosePreview(); }}>
         <div className="dt-map-preview-heading"><span className="dt-map-category" style={{ color: CATEGORIES[previewPlace.cat].ink, background: CATEGORIES[previewPlace.cat].tint }}>{CATEGORIES[previewPlace.cat].label}</span><button className="dt-map-close" onClick={onClosePreview} aria-label="Close place details"><Icon name="close" size={17} /></button></div>
-        <h3>{previewPlace.name}</h3>
-        <p className="dt-map-preview-meta">{previewPlace.area} <span>·</span> <Icon name="clock" size={12} /> {previewPlace.typical}</p>
-        <p className="dt-map-preview-description">{previewPlace.blurb}</p>
+        <h3>{previewPlace.name}</h3><p className="dt-map-preview-meta">{previewPlace.area} {previewPlace.typical && <><span>·</span><Icon name="clock" size={12} />{previewPlace.typical}</>}</p>
+        {previewPlace.blurb && <p className="dt-map-preview-description">{previewPlace.blurb}</p>}
+        {!coordinate(previewPlace) && <p className="dt-map-unlocated">This place needs a location before it can appear on the map.</p>}
         <div className="dt-map-preview-actions">
           {!previewStatus && <button className="dt-map-secondary" onClick={() => onSavePlace(previewPlace.id)}><Icon name="bookmark" size={15} />Save to Ideas</button>}
           {!previewPlanned && <button className="dt-map-primary" onClick={() => onAddPlace(previewPlace.id)}><Icon name="plus" size={15} />Add to {day.label}</button>}
+          {!coordinate(previewPlace) && onLocatePlace && <button className="dt-map-secondary" onClick={() => onLocatePlace(previewPlace.id)}>Locate place</button>}
           {previewStatus && <span className="dt-map-place-status">{previewStatus}</span>}
-        </div>
-        <small>Sample place details for this prototype</small>
+        </div><PlaceCredits place={previewPlace} />
       </div>}
-
-      <div className="dt-map-bottom">
-        <div className="dt-map-legend" aria-label="Route legend"><span><RouteSample mode="walk" />Walk</span><span><RouteSample mode="transit" />Transit</span><span><RouteSample mode="drive" />Drive</span>{proposed && <span className="dt-map-proposed"><RouteSample mode="transit" />Suggested</span>}</div>
-        <span className="dt-map-disclaimer">{isKyoto ? 'Illustrative map' : 'Sample map layout'} · sample travel times</span>
-      </div>
-
-      <div className="dt-map-mobile-stop">
-        {active ? <><div className="dt-map-mobile-stop-main"><span className="dt-map-stop-number">{activeIndex + 1}</span><div><strong>{active.pl.name}</strong><span>{activeTime}</span></div></div><div className="dt-map-stop-actions"><button className="dt-map-secondary" onClick={() => goToStop(-1)} aria-label="Previous stop"><Icon name="left" /></button><button className="dt-map-secondary" onClick={() => goToStop(1)} aria-label="Next stop"><Icon name="right" /></button><button className="dt-map-primary" onClick={() => { onSelect(active.it.aid); onOpenDetails?.(); }}>Details<Icon name="right" size={14} /></button></div></> : <p>No stops yet. Add a place to start your route.</p>}
-      </div>
+      {!previewPlace && <div className="dt-map-mobile-stop">
+        {active ? <><div className="dt-map-mobile-stop-main"><span className="dt-map-stop-number">{activeIndex + 1}</span><div><strong>{active.pl.name}</strong><span>{activeTime}</span><PlaceCredits place={active.pl} /></div></div><div className="dt-map-stop-actions"><button className="dt-map-secondary" onClick={() => goToStop(-1)} aria-label="Previous stop"><Icon name="left" /></button><button className="dt-map-secondary" onClick={() => goToStop(1)} aria-label="Next stop"><Icon name="right" /></button><button className="dt-map-primary" onClick={() => { onSelect(active.it.aid); onOpenDetails?.(); }}>Details<Icon name="right" size={14} /></button></div></> : <p>No stops yet. Add a place to start your route.</p>}
+      </div>}
     </div>
   </section>;
 }
