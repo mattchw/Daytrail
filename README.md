@@ -17,7 +17,7 @@ pnpm dev
 Before starting the development server, fill in the two configuration values described below. The server runs at `http://127.0.0.1:5182`.
 
 ```sh
-pnpm test     # Planning-model checks
+pnpm test     # Planning, Google Maps and discovery checks
 pnpm build    # TypeScript validation and production output in dist/
 pnpm preview  # Serve the production build locally
 ```
@@ -47,6 +47,10 @@ The app loads the Maps JavaScript API once and shares its Places and Routes libr
 - `src/model.ts`: typed trip data, Kyoto sample places, scheduling, persistence filtering, and restoration validation.
 - `src/model.test.mjs`: checks for fixed bookings, live and uncertain journeys, dates, persisted place data, and invalid saved data.
 - `src/googleMaps.ts`: Google API loading, place search/details, route calculation, and transient request caches.
+- `src/discoveryData.ts`: rich search, scoped map searches, ratings, photo handles, and separate detail requests.
+- `src/openingHours.ts`: local opening status, selected-date schedules, and regular-hours fallbacks.
+- `src/useDiscovery.ts`: shared search, selected details, request versions, and mobile scroll state.
+- `src/components/DiscoveryExplorer.tsx`: photo cards and accessible place details.
 - `src/usePlaceData.ts`: fresh place-detail hydration for the active day and saved Ideas.
 - `src/useLiveRoutes.ts`: departure-time conversion, sequential journey calculation, and route loading state.
 - `src/components/MapPanel.tsx`: Google map, synchronized stop selection, actual route paths, and place previews.
@@ -66,7 +70,19 @@ The Kyoto example retains its curated descriptions. Named sample attractions res
 
 Fixed bookings retain their booked times and expose arrival conflicts. Missing journey estimates keep later arrival times uncertain. Changing stop order, transport mode, locations, dates, or relevant visit durations recalculates the affected journeys. Manual rearranging is supported; automatic route optimisation is deferred until it can compare real journeys while preserving booking constraints. The former sample order-suggestion control is not shown.
 
-Open the trip title to edit the start date and destination time zone. Use an IANA time zone such as `Asia/Tokyo` or `Europe/London`; itinerary times are local to that zone. Kyoto trips default to `Asia/Tokyo`; other new trips default to `UTC` and should be updated for their destination. Transit calculations use the trip date and the departure time resulting from earlier visits and journeys, including daylight-saving changes. Daytrail requests transit estimates only within 100 days ahead or 7 days in the past. Outside that window, it shows the limitation instead of substituting today's timetable. Walking and driving remain available where Google can provide a route.
+Open the trip title to edit the start date and destination time zone. Use an IANA time zone such as `Asia/Tokyo` or `Europe/London`; itinerary times are local to that zone. New trips ask for their destination time zone; the sample Kyoto trip uses `Asia/Tokyo`. Transit calculations use the trip date and the departure time resulting from earlier visits and journeys, including daylight-saving changes. Daytrail requests transit estimates only within 100 days ahead or 7 days in the past. Outside that window, it shows the limitation instead of substituting today's timetable. Walking and driving remain available where Google can provide a route.
+
+## Discovery experience
+
+Discover offers Attractions, Temples, Museums, Restaurants, and Cafés, with up to eight results per search. Cards include a lazy-loaded photo with author credits, Google rating and rating count, and local opening status when available. Place details show a larger photo, the selected trip date's hours, an expandable weekly schedule, and Save / Add actions. Missing photos, ratings, or hours remain explicit rather than being invented.
+
+The search session stays in memory when switching between mobile results, place details, and the map. Back to results restores the query, filters, and scroll position. Hotel and custom-location pickers keep separate search state.
+
+Pan or zoom the map, then choose **Search this area** to search the visible bounds. A map move alone does not issue a search. Search results have distinct unnumbered pins and never become route stops until added. Discovery keeps the current viewport steady while routes refresh. **Back to the destination** resumes destination-based search, and **Fit all stops** restores the itinerary view.
+
+Opening status uses the place's local time. Current schedules cover the available upcoming dates; later trip dates show regular weekly hours and explain that holiday hours may differ. Hours are informational and do not automatically move activities. Photos, ratings, hours, and photo URLs remain session-only and are excluded from saved trips, snapshots, and exports.
+
+Search requests use explicit field lists. Ratings and opening fields can affect the Google billing tier. Photos load only when visible, detail requests happen only when a place is opened, and duplicate in-flight requests are shared. Monitor usage in the existing Google Cloud project.
 
 ## Stored place data
 

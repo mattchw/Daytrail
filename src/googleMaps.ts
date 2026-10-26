@@ -101,7 +101,7 @@ export async function googlePlaceKey(id: string): Promise<string> {
   return `gplace-${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
-async function fromGooglePlace(value: google.maps.places.Place): Promise<Place | null> {
+export async function fromGooglePlace(value: google.maps.places.Place): Promise<Place | null> {
   if (!placeIdPattern.test(value.id) || !value.location || !value.displayName) return null;
   const types = value.types ?? [];
   const food = types.some(type => /restaurant|cafe|bakery|food|bar|meal/.test(type));

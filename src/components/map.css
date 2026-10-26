@@ -22,6 +22,16 @@
 .dt-map-pin:hover{box-shadow:0 0 0 4px #fff9,0 4px 10px #293b3440}
 .dt-map-pin.is-selected{width:38px;height:38px;background:#0e6e68;border:3px solid #fffdf8;font-size:14px;box-shadow:0 0 0 3px #0e6e68,0 6px 12px #26322f25}
 .dt-map-preview-pin{width:32px;height:32px;border-radius:50%;border:2px dashed #b4541a;background:#fffcf7;color:#b4541a;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:500;box-shadow:0 2px 7px #26322f25;pointer-events:none}
+.dt-map-discovery-pin{width:30px;height:30px;padding:0;display:flex;align-items:center;justify-content:center;border:2px solid var(--pin-color);border-radius:9px;background:#fffcf7;color:var(--pin-color)!important;font-size:13px;box-shadow:0 2px 7px #293b3438}
+.dt-map-discovery-pin:hover{box-shadow:0 0 0 4px #fffcf7aa,0 4px 10px #293b3440}
+.dt-map .is-discovery-selected{box-shadow:0 0 0 3px #fffcf7,0 0 0 6px #b4541a!important;transform:scale(1.07)}
+.dt-map-discovery-key{display:inline-block;width:10px;height:10px;border:1.5px solid #2c5a8c;border-radius:3px;background:#fffcf7}
+.dt-map-search-area{position:absolute;top:12px;left:12px;right:66px;z-index:3;display:flex;align-items:flex-start;flex-direction:column;gap:5px;pointer-events:none}
+.dt-map-search-area button{pointer-events:auto;box-shadow:0 2px 9px #26322f29;border:2px solid #fffcf7;min-height:38px;padding:8px 12px;font-size:11px}
+.dt-map-search-area button:disabled{opacity:1;background:#e6e8df;border-color:#fffcf7;color:#657164!important;cursor:default}
+.dt-map-search-area>span{font-size:10px;line-height:1.5;color:#5c6c5f;background:#fffcf7f2;border:1px solid #dfd8cc;border-radius:7px;padding:7px 9px;max-width:230px;box-shadow:0 2px 6px #26322f10}
+.dt-map-mobile-results{display:none}
+.dt-map.is-discovering .dt-map-place-preview{display:none}
 .dt-map-controls{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;align-items:center;padding:3px;border:1px solid #dfd8cc;border-radius:10px;background:#fffcf7;box-shadow:0 2px 6px #26322f12;z-index:2}
 .dt-map-controls button{border:0;background:none;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:7px;padding:0}
 .dt-map-controls button:hover:not(:disabled){background:#e9eee3;color:#0e6e68}
@@ -41,6 +51,8 @@
 .dt-map-stop-number{flex:none;display:flex;align-items:center;justify-content:center;width:31px;height:31px;border-radius:50%;background:#0e6e68;color:white;font-size:12px;font-weight:700}
 .dt-map-place-preview{position:absolute;right:66px;top:76px;z-index:9;border:1px solid #dfd8cc;border-radius:14px;padding:15px;width:300px;max-width:calc(100% - 80px);max-height:calc(100% - 155px);overflow-y:auto;box-sizing:border-box;background:#fffcf7;box-shadow:0 12px 28px #26322f21}
 .dt-map-preview-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+.dt-map-back-results{display:inline-flex;align-items:center;gap:4px;padding:0;min-height:36px;border:0;background:transparent;font-size:11px;font-weight:600;color:#0e6e68!important;white-space:nowrap}
+.dt-map-back-results+.dt-map-category{margin-left:auto}
 .dt-map-category{font-size:10px;font-weight:650;line-height:1.2;padding:5px 8px;border-radius:6px}
 .dt-map-close{border:0;padding:0;display:flex;align-items:center;justify-content:center;background:transparent;width:28px;height:28px;border-radius:6px;color:#768074!important}
 .dt-map-close:hover{background:#eee9df}
@@ -81,6 +93,8 @@
   .dt-map-viewport{min-height:220px}
   .dt-map-pin{width:36px;height:36px;font-size:13px}
   .dt-map-pin.is-selected{width:40px;height:40px;font-size:15px}
+  .dt-map-discovery-pin{width:34px;height:34px;font-size:15px}
+  .dt-map-search-area button{min-height:42px;font-size:12px}
   .dt-map-controls button{width:36px;height:36px}
   .dt-map-selected{display:none}
   .dt-map-location-help{padding:10px;gap:7px}
@@ -102,6 +116,12 @@
   .dt-map-stop-actions .dt-map-primary{margin-left:auto;min-width:96px}
   .dt-map-mobile-stop>p{font-size:12px;color:#747d70;margin:8px 0}
   .dt-map-place-preview{position:relative;top:auto;right:auto;left:auto;bottom:auto;width:auto;max-width:none;max-height:min(280px,40dvh);min-height:150px;flex:0 1 auto;border-radius:0;border-width:1px 0 0;padding:14px;box-shadow:none}
+  .dt-map.is-discovering .dt-map-place-preview{display:block}
+  .dt-map-mobile-results{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px;flex:none;border-top:1px solid #e2dccf;background:#fffcf7}
+  .dt-map-mobile-results strong{display:block;font-size:12px;line-height:1.4}
+  .dt-map-mobile-results span{display:block;font-size:10px;line-height:1.5;color:#6e796c;margin-top:3px}
+  .dt-map-mobile-results button{min-height:42px;flex:none;font-size:12px}
+  .dt-map-back-results{font-size:12px}
   .dt-map-place-preview h3{font-size:18px}
   .dt-map-place-preview .dt-map-close{width:36px;height:36px}
   .dt-map-preview-description{font-size:12px;line-height:1.6;margin:10px 0!important}
