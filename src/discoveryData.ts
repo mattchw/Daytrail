@@ -1,6 +1,6 @@
 import type { Place } from './model';
 import { fromGooglePlace, loadGoogleMaps, mapsErrorMessage, placeSearchQuery } from './googleMaps';
-import type { OpeningPoint, OpeningSchedule } from './openingHours';
+import type { OpeningInfo, OpeningPoint, OpeningSchedule } from './openingHours';
 export { getOpeningSummary } from './openingHours';
 export type { OpeningSchedule, OpeningSummary } from './openingHours';
 
@@ -25,6 +25,7 @@ interface CacheEntry<T> { at: number; promise: Promise<T> }
 const searchCache = new Map<string, CacheEntry<DiscoveryResult[]>>();
 // Detail responses never reuse the intentionally smaller card response.
 const detailCache = new Map<string, CacheEntry<DiscoveryResult>>();
+const visitHoursCache = new Map<string, CacheEntry<OpeningInfo>>();
 const photoHandles = new Map<string, { at: number; photo: google.maps.places.Photo; urls: Map<number, string> }>();
 let photoSequence = 0;
 const baseFields = ['id', 'displayName', 'location', 'formattedAddress', 'googleMapsURI', 'types', 'attributions'];
@@ -154,6 +155,26 @@ export function fetchDiscoveryDetails(googleId: string): Promise<DiscoveryResult
       const result = await normalize(value, true);
       if (!result) throw { code: 'NOT_FOUND' };
       return result;
+    } catch (error) { throw new Error(mapsErrorMessage(error)); }
+  });
+}
+
+/** Itinerary checks request only hours, never photos, reviews or ratings. */
+export function fetchVisitOpeningInfo(googleId: string): Promise<OpeningInfo> {
+  if (!/^[A-Za-z0-9_-]{1,512}$/.test(googleId)) return Promise.reject(new Error('This saved place has an invalid Google Maps ID.'));
+  const detail = detailCache.get(googleId);
+  if (detail && Date.now() - detail.at < CACHE_MS) return detail.promise.then(result => result.info);
+  return cached(visitHoursCache, googleId, async () => {
+    try {
+      const maps = await loadGoogleMaps();
+      const { Place: GooglePlace } = await maps.importLibrary('places') as google.maps.PlacesLibrary;
+      const value = new GooglePlace({ id: googleId });
+      await timeout(value.fetchFields({ fields: ['businessStatus', 'utcOffsetMinutes', 'currentOpeningHours', 'regularOpeningHours'] }));
+      return {
+        businessStatus: value.businessStatus ?? undefined,
+        utcOffsetMinutes: Number.isFinite(value.utcOffsetMinutes) ? value.utcOffsetMinutes! : undefined,
+        fetchedAt: Date.now(), currentHours: openingSchedule(value.currentOpeningHours), regularHours: openingSchedule(value.regularOpeningHours),
+      };
     } catch (error) { throw new Error(mapsErrorMessage(error)); }
   });
 }

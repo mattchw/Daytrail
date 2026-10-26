@@ -47,6 +47,12 @@ export interface Day {
   date: string;
   title: string;
   endMode: Mode;
+  /** Trip-local departure time in minutes. Older plans start at 09:00. */
+  startTime?: number;
+  /** A preferred return time, never a cutoff for visits or journeys. */
+  finishBy?: number | null;
+  /** A different departure point for this day; the return remains the hotel. */
+  startPlaceId?: string;
   items: Activity[];
 }
 
@@ -166,6 +172,14 @@ export function getPlaces(trip: Trip): Record<string, Place> {
   return { ...PLACES, ...trip.customPlaces };
 }
 
+export function dayStartTime(day: Day): number { return day.startTime ?? 540; }
+
+export function dayStartPlace(day: Day, places: Record<string, Place>): Place {
+  const place = places[day.startPlaceId ?? 'hotel'];
+  if (!place) throw new Error('Choose a valid starting point for this day.');
+  return place;
+}
+
 /** Keep provider IDs and user planning data; fetch Google place details again per session. */
 export function persistableTrip(trip: Trip): Trip {
   return {
@@ -243,7 +257,7 @@ export function schedule(day: Day, places: Record<string, Place>, legs?: Record<
   finishApprox: boolean;
 } {
   const hotel = places.hotel;
-  if (!hotel) throw new Error('A trip needs a starting point.');
+  if (!hotel) throw new Error('A trip needs a return location.');
   const journey = (key: string, from: Place, to: Place, mode: Mode): Journey => {
     if (legs === undefined) return travel(from, to, mode);
     const leg = Object.hasOwn(legs, key) ? legs[key] : undefined;
@@ -255,8 +269,8 @@ export function schedule(day: Day, places: Record<string, Place>, legs?: Record<
     }
     return leg;
   };
-  let time = 540;
-  let previous = hotel;
+  let time = dayStartTime(day);
+  let previous = dayStartPlace(day, places);
   let travelMinutes = 0;
   let unknown = 0;
   let late = 0;
@@ -298,7 +312,7 @@ export function proposeOrder(day: Day, places: Record<string, Place>, legs?: Rec
 } | null {
   // Incoming legs only describe the current order. Reordering real places needs new route
   // requests; the sample straight-line estimator cannot establish an improvement.
-  if (legs !== undefined || [places.hotel, ...day.items.map(item => places[item.placeId])]
+  if (legs !== undefined || [dayStartPlace(day, places), places.hotel, ...day.items.map(item => places[item.placeId])]
     .some(place => place && (place.googlePlaceId !== undefined || place.lat !== undefined || place.lng !== undefined))) return null;
   const flexibleCount = day.items.filter(item => item.fixed === null).length;
   if (day.endMode === 'transit' || day.items.some(item => item.mode === 'transit')
@@ -411,6 +425,10 @@ export function isTrip(value: unknown): value is Trip {
     if (!isRecord(day) || !isId(day.id) || dayIds.has(day.id) || !isText(day.label, 80, true)
       || !isText(day.date, 80, true) || !isText(day.title, 160) || !isMode(day.endMode)
       || !Array.isArray(day.items) || day.items.length > 100) return false;
+    if ((day.startTime !== undefined && !isInteger(day.startTime, 0, 1439))
+      || (day.startPlaceId !== undefined && !knownPlace(day.startPlaceId))
+      || (day.finishBy !== undefined && day.finishBy !== null
+        && (!isInteger(day.finishBy, 0, 1439) || day.finishBy <= (day.startTime ?? 540)))) return false;
     dayIds.add(day.id);
     for (const item of day.items) {
       if (!isRecord(item) || !isId(item.aid) || activityIds.has(item.aid)

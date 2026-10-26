@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Day, Journey, Place, Trip } from './model';
+import { dayStartPlace, dayStartTime, type Day, type Journey, type Place, type Trip } from './model';
 import { computeJourney, hasCoordinates, unavailableJourney } from './googleMaps';
 
 export interface DayRouteInput { date: string; timezone: string; day: Day; places: Record<string, Place> }
@@ -51,7 +51,7 @@ export function transitDateReason(departure: Date, now = Date.now()): string | n
 
 export function pendingLegs(input: DayRouteInput): Record<string, Journey> {
   const result: Record<string, Journey> = {};
-  let previous = input.places.hotel;
+  let previous = dayStartPlace(input.day, input.places);
   for (const item of input.day.items) {
     const place = input.places[item.placeId];
     result[item.aid] = hasCoordinates(previous) && hasCoordinates(place)
@@ -71,7 +71,7 @@ export function reuseReadyStaticLegs(input: DayRouteInput, priorInput: DayRouteI
   const next = pendingLegs(input);
   if (!priorInput) return next;
   const pairs = (plan: DayRouteInput) => {
-    let from = plan.places.hotel;
+    let from = dayStartPlace(plan.day, plan.places);
     const result = plan.day.items.map(item => {
       const to = plan.places[item.placeId];
       const pair = { id: item.aid, from, to, mode: item.mode };
@@ -108,8 +108,8 @@ export async function calculateDayRoutes(
 ): Promise<Record<string, Journey>> {
   const result = pendingLegs(input);
   if (!input.day.items.length) return result;
-  let previous = input.places.hotel;
-  let minutes = 540;
+  let previous = dayStartPlace(input.day, input.places);
+  let minutes = dayStartTime(input.day);
   let uncertain = false;
   const steps = [...input.day.items.map(item => ({ id: item.aid, place: input.places[item.placeId], mode: item.mode, duration: item.duration, fixed: item.fixed })),
     { id: 'return', place: input.places.hotel, mode: input.day.endMode, duration: 0, fixed: null }];
@@ -137,7 +137,7 @@ export async function calculateDayRoutes(
 export function routeInputSignature(trip: Trip, dayIndex: number, places: Record<string, Place>): string {
   const day = trip.days[dayIndex];
   const routePlaces: Record<string, Place> = {};
-  for (const id of ['hotel', ...day.items.map(item => item.placeId)]) {
+  for (const id of [day.startPlaceId ?? 'hotel', 'hotel', ...day.items.map(item => item.placeId)]) {
     const place = places[id];
     if (place) routePlaces[id] = {
       id: place.id, name: '', cat: place.cat, x: 0, y: 0, area: '', typical: '', blurb: '',
@@ -145,7 +145,11 @@ export function routeInputSignature(trip: Trip, dayIndex: number, places: Record
     };
   }
   return JSON.stringify({ date: tripDayDate(trip.startDate, dayIndex), timezone: trip.timezone,
-    day: { ...day, title: '', items: day.items.map(item => ({ ...item, note: '' })) }, places: routePlaces });
+    day: {
+      id: day.id, label: '', date: '', title: '', endMode: day.endMode,
+      startTime: dayStartTime(day), startPlaceId: day.startPlaceId ?? 'hotel',
+      items: day.items.map(item => ({ ...item, note: '' })),
+    }, places: routePlaces });
 }
 
 interface RouteState { key: string; input: DayRouteInput | null; legs: Record<string, Journey>; loading: boolean; error: string | null }

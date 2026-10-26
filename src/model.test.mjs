@@ -8,7 +8,7 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
 }).outputText;
 const model = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
-const { PLACES, seedTrip, createTrip, getPlaces, formatTime, schedule, travel, proposeOrder, isTrip, persistableTrip } = model;
+const { PLACES, seedTrip, createTrip, getPlaces, dayStartTime, dayStartPlace, formatTime, schedule, travel, proposeOrder, isTrip, persistableTrip } = model;
 let assertions = 0;
 function check(name, fn) { fn(); assertions += 1; console.log(`✓ ${name}`); }
 const activity = (aid, placeId, overrides = {}) => ({ aid, placeId, duration: 60, fixed: null, mode: 'walk', note: '', ...overrides });
@@ -20,6 +20,65 @@ check('seed and created trips survive strict JSON restoration', () => {
   assert.deepEqual(createTrip('Leap year', 'Tokyo', '2028-02-28', 3).days.map(d => d.date), ['Mon 28', 'Tue 29', 'Wed 1']);
   assert.throws(() => createTrip('Invalid', 'Tokyo', '2027-02-29', 3));
   assert.throws(() => createTrip('Invalid', 'Tokyo', '2027-05-14', 31));
+});
+
+check('legacy day setup restores with a 09:00 hotel departure without changing stored plans', () => {
+  const trip = seedTrip();
+  const restored = JSON.parse(JSON.stringify(persistableTrip(trip)));
+  assert.equal(isTrip(restored), true);
+  assert.equal(dayStartTime(restored.days[0]), 540);
+  assert.equal(dayStartPlace(restored.days[0], getPlaces(restored)).id, 'hotel');
+  assert.equal(Object.hasOwn(restored.days[0], 'startTime'), false);
+  assert.equal(Object.hasOwn(restored.days[0], 'finishBy'), false);
+  assert.equal(Object.hasOwn(restored.days[0], 'startPlaceId'), false);
+});
+
+check('day timing and alternate departure survive storage without provider content', () => {
+  const trip = seedTrip();
+  trip.customPlaces.airport = { ...PLACES.hotel, id: 'airport', name: 'Provider airport', googlePlaceId: 'ChIJAirport', lat: 35, lng: 135 };
+  Object.assign(trip.days[0], { startTime: 780, finishBy: 1260, startPlaceId: 'airport' });
+  const restored = JSON.parse(JSON.stringify(persistableTrip(trip)));
+  assert.equal(isTrip(restored), true);
+  assert.equal(dayStartTime(restored.days[0]), 780);
+  assert.equal(dayStartPlace(restored.days[0], getPlaces(restored)).id, 'airport');
+  assert.equal(restored.days[0].finishBy, 1260);
+  assert.equal(restored.customPlaces.airport.lat, undefined);
+  assert.equal(restored.customPlaces.airport.googlePlaceId, 'ChIJAirport');
+  assert.doesNotMatch(JSON.stringify(restored), /Provider airport/);
+});
+
+check('departure uses the selected location and time while return stays at the hotel', () => {
+  const plan = day([activity('one', 'kiyomizu')], { startTime: 720, startPlaceId: 'fushimi' });
+  const result = schedule(plan, PLACES);
+  assert.equal(result.rows[0].arrive, 720 + travel(PLACES.fushimi, PLACES.kiyomizu, 'walk').min);
+  assert.deepEqual(result.endLeg, travel(PLACES.kiyomizu, PLACES.hotel, 'walk'));
+  assert.equal(schedule({ ...plan, items: [] }, PLACES).finish, 720);
+  assert.throws(() => dayStartPlace({ ...plan, startPlaceId: 'missing' }, PLACES), /starting point/);
+});
+
+check('preferred finish is a soft goal and never truncates visits, bookings or return travel', () => {
+  const plan = day([activity('one', 'fushimi', { duration: 180 }), activity('two', 'kiyomizu', { fixed: 1200 })], { startTime: 600 });
+  const ordinary = schedule(plan, PLACES);
+  const withGoal = schedule({ ...plan, finishBy: 700 }, PLACES);
+  assert.deepEqual(withGoal, ordinary);
+  assert.ok(withGoal.finish > 700);
+});
+
+check('restoration validates departure times, finish goals and starting-place references', () => {
+  const invalid = [
+    { startTime: null }, { startTime: -1 }, { startTime: 1440 }, { startTime: 600.5 }, { startTime: '09:00' },
+    { finishBy: 540 }, { finishBy: 539 }, { finishBy: 1440 }, { finishBy: '17:00' },
+    { startTime: 720, finishBy: 720 }, { startTime: 720, finishBy: 700 },
+    { startPlaceId: 'missing' }, { startPlaceId: null }, { startPlaceId: 'constructor' }, { startPlaceId: '' },
+  ];
+  for (const settings of invalid) {
+    const trip = seedTrip(); Object.assign(trip.days[0], settings);
+    assert.equal(isTrip(trip), false, JSON.stringify(settings));
+  }
+  for (const settings of [{ startTime: 0, finishBy: 1 }, { startTime: 1439, finishBy: null }, { startPlaceId: 'hotel' }, { startPlaceId: 'fushimi', finishBy: 1439 }]) {
+    const trip = seedTrip(); Object.assign(trip.days[0], settings);
+    assert.equal(isTrip(trip), true, JSON.stringify(settings));
+  }
 });
 
 check('seed data is independent between callers and has no placeholder brackets', () => {

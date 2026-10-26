@@ -6,10 +6,12 @@ const compile = name => ts.transpileModule(readFileSync(new URL(name, import.met
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
 }).outputText;
 const dataURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+const modelURL = dataURL(compile('./model.ts'));
 const serviceURL = dataURL(compile('./googleMaps.ts').replaceAll('import.meta.env', '({})'));
 const service = await import(serviceURL);
 const hookURL = dataURL(compile('./useLiveRoutes.ts')
   .replace(/from ['"]react['"]/g, `from ${JSON.stringify(import.meta.resolve('react'))}`)
+  .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
   .replace(/from ['"]\.\/googleMaps['"]/g, `from ${JSON.stringify(serviceURL)}`));
 const { tripDayDate, zonedDeparture, transitDateReason, calculateDayRoutes, pendingLegs, routeInputSignature, reuseReadyStaticLegs } = await import(hookURL);
 let passed = 0;
@@ -62,6 +64,30 @@ await check('missing hotel cannot produce a made-up first leg; internal journeys
   assert.equal(result.b.min, 20);
   assert.match(result.return.reason, /map location/);
 });
+await check('alternate departure uses its location and trip-local time while returning to the hotel', async () => {
+  const calls = [];
+  const plan = input([activity('a', { mode: 'transit', duration: 30 }), activity('b', { mode: 'transit' })]);
+  Object.assign(plan.day, { startPlaceId: 'c', startTime: 780, finishBy: 800 });
+  plan.day.endMode = 'transit';
+  const compute = async (from, to, mode, date) => { calls.push([from.id, to.id, date?.toISOString()]); return ready(mode, 20); };
+  await calculateDayRoutes(plan, undefined, undefined, compute, now);
+  assert.deepEqual(calls, [
+    ['c', 'a', '2026-11-01T04:00:00.000Z'],
+    ['a', 'b', '2026-11-01T04:50:00.000Z'],
+    ['b', 'hotel', '2026-11-01T06:10:00.000Z'],
+  ]);
+});
+await check('unlocated alternate start blocks only the first static journey, not the located return', async () => {
+  const plan = input([activity('a')], { places: { ...places, c: { ...places.c, lat: undefined, lng: undefined } } });
+  plan.day.startPlaceId = 'c';
+  assert.equal(pendingLegs(plan).a.status, 'unavailable');
+  assert.equal(pendingLegs(plan).return.status, 'loading');
+  const calls = [];
+  const result = await calculateDayRoutes(plan, undefined, undefined, async (from, to, mode) => { calls.push([from.id, to.id]); return ready(mode); }, now);
+  assert.deepEqual(calls, [['a', 'hotel']]);
+  assert.equal(result.a.min, null);
+  assert.equal(result.return.min, 20);
+});
 await check('future transit rejects without issuing a chargeable request', async () => {
   let calls = 0;
   const plan = input([activity('a', { mode: 'transit' })], { date: '2027-05-14' });
@@ -96,6 +122,22 @@ await check('notes and selection changes do not invalidate route inputs; timing 
   trip.days[0].items.reverse();
   assert.notEqual(routeInputSignature(trip, 0, places), original);
 });
+await check('route signature normalizes legacy defaults, observes departure setup, and ignores finish goals', () => {
+  const trip = { id: 't', name: 'Trip', destination: 'Kyoto', startDate: '2026-11-01', timezone: 'Asia/Tokyo', days: [input([activity('a')]).day], ideas: [], customPlaces: {} };
+  const original = routeInputSignature(trip, 0, places);
+  Object.assign(trip.days[0], { startTime: 540, startPlaceId: 'hotel', finishBy: 1200 });
+  assert.equal(routeInputSignature(trip, 0, places), original);
+  trip.days[0].startTime = 600;
+  assert.notEqual(routeInputSignature(trip, 0, places), original);
+  trip.days[0].startTime = 540;
+  trip.days[0].startPlaceId = 'c';
+  const customStart = routeInputSignature(trip, 0, places);
+  assert.notEqual(customStart, original);
+  assert.ok(JSON.parse(customStart).places.c);
+  assert.notEqual(routeInputSignature(trip, 0, { ...places, c: { ...places.c, lng: 136 } }), customStart);
+  trip.days[0].finishBy = 1300;
+  assert.equal(routeInputSignature(trip, 0, places), customStart);
+});
 await check('duration edits preserve ready static journeys without a false zero-travel interval', () => {
   const prior = input([activity('a'), activity('b', { mode: 'drive' })]);
   const legs = { a: ready('walk', 48), b: ready('drive', 17), return: ready('walk', 45) };
@@ -123,6 +165,18 @@ await check('static reuse never crosses a reordered pair, changed endpoint, mode
   const transit = input([activity('a', { mode: 'transit' })]);
   const shifted = structuredClone(transit); shifted.day.items[0].duration += 30;
   assert.equal(reuseReadyStaticLegs(shifted, transit, { a: ready('transit', 18) }).a.min, null);
+});
+await check('a changed starting point invalidates the first pair while time edits keep static routes', () => {
+  const prior = input([activity('a'), activity('b')]);
+  const legs = { a: ready('walk', 48), b: ready('walk', 17), return: ready('walk', 45) };
+  const changed = structuredClone(prior);
+  Object.assign(changed.day, { startTime: 720, startPlaceId: 'c', finishBy: 800 });
+  const reused = reuseReadyStaticLegs(changed, prior, legs);
+  assert.equal(reused.a.min, null);
+  assert.equal(reused.b.min, 17);
+  assert.equal(reused.return.min, 45);
+  changed.day.startPlaceId = 'hotel';
+  assert.equal(reuseReadyStaticLegs(changed, prior, legs).a.min, 48);
 });
 await check('search preserves explicit geography and sanitizes upstream errors', () => {
   assert.equal(service.placeSearchQuery('coffee', 'Kyoto, Japan'), 'coffee in Kyoto, Japan');

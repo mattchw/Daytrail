@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CATEGORIES, formatDuration, formatTime } from '../model';
+import { CATEGORIES, dayStartPlace, dayStartTime, formatDuration, formatTime } from '../model';
 import type { Activity, Day, Place, schedule as computeSchedule } from '../model';
 import { GOOGLE_MAP_ID, loadGoogleMaps } from '../googleMaps';
 import './map.css';
@@ -20,6 +20,7 @@ type Props = {
   onOpenDetails?: () => void;
   destination?: string;
   onChooseBase?: () => void;
+  onChooseStart?: () => void;
   onLocatePlace?: (id: string) => void;
   loadingRoutes?: boolean;
   discoveryActive?: boolean;
@@ -88,15 +89,15 @@ function RouteSample({ mode }: { mode: string }) {
   return <svg width="24" height="6" viewBox="0 0 24 6" aria-hidden="true"><path d="M2 3h20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={mode === 'walk' ? '.1 5' : mode === 'transit' ? '6 4' : undefined} /></svg>;
 }
 
-export default function MapPanel({ day, places, schedule, selected, onSelect, previewPlace, onClosePreview, onSavePlace, onAddPlace, placeStatus, onOpenDetails, destination = 'your destination', onChooseBase, onLocatePlace, loadingRoutes = false, discoveryActive = false, discoveryPlaces = [], discoverySelectedId = null, discoveryResultsKey = '', discoveryScope = 'destination', onSelectDiscovery, onSearchArea, searchingArea = false, onBackToDiscovery, resetCameraKey }: Props) {
+export default function MapPanel({ day, places, schedule, selected, onSelect, previewPlace, onClosePreview, onSavePlace, onAddPlace, placeStatus, onOpenDetails, destination = 'your destination', onChooseBase, onChooseStart, onLocatePlace, loadingRoutes = false, discoveryActive = false, discoveryPlaces = [], discoverySelectedId = null, discoveryResultsKey = '', discoveryScope = 'destination', onSelectDiscovery, onSearchArea, searchingArea = false, onBackToDiscovery, resetCameraKey }: Props) {
   const surface = useRef<HTMLDivElement>(null);
   const map = useRef<google.maps.Map | null>(null);
   const maps = useRef<typeof google.maps | null>(null);
   const markerLibrary = useRef<google.maps.MarkerLibrary | null>(null);
   const markers = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
   const lines = useRef<google.maps.Polyline[]>([]);
-  const latest = useRef({ onSelect, onChooseBase, onSelectDiscovery, discoveryActive });
-  latest.current = { onSelect, onChooseBase, onSelectDiscovery, discoveryActive };
+  const latest = useRef({ onSelect, onChooseBase, onChooseStart, onSelectDiscovery, discoveryActive });
+  latest.current = { onSelect, onChooseBase, onChooseStart, onSelectDiscovery, discoveryActive };
   const cameraIntent = useRef<'itinerary' | 'discovery' | 'manual'>('itinerary');
   const pendingUserMovement = useRef(false);
   const baselineArea = useRef<MapArea | null>(null);
@@ -110,6 +111,8 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
   const [areaDirty, setAreaDirty] = useState(false);
   const [areaTooWide, setAreaTooWide] = useState(false);
   const hotel = places.hotel;
+  const startPlace = dayStartPlace(day, places);
+  const startsAtHotel = identity(startPlace) === identity(hotel);
   const selectedIndex = schedule.rows.findIndex(row => row.it.aid === selected);
   const activeIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const active = schedule.rows[activeIndex];
@@ -119,21 +122,22 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
   const genericGooglePreview = !!previewPlace?.googlePlaceId && previewPlace.blurb === 'A place from Google Maps. Set your own visit duration and add planning notes.';
   const previewTypical = genericGooglePreview && previewPlace?.typical === '1 h' ? '' : previewPlace?.typical;
   const missingPlaces = schedule.rows.filter(row => !coordinate(row.pl));
-  const pointKey = [hotel, ...schedule.rows.map(row => row.pl)].filter(Boolean).map(place => `${place!.id}:${place!.lat ?? ''}:${place!.lng ?? ''}`).join('|');
+  const pointKey = [startPlace, hotel, ...schedule.rows.map(row => row.pl)].filter(Boolean).map(place => `${place!.id}:${place!.lat ?? ''}:${place!.lng ?? ''}`).join('|');
   const journeyLegs = [...schedule.rows.map(row => row.leg), schedule.endLeg];
   const chooseBaseEnabled = !!onChooseBase;
+  const chooseStartEnabled = !!onChooseStart;
   const standalonePreview = previewPlace
-    && ![hotel, ...schedule.rows.map(row => row.pl), ...(discoveryActive ? discoveryPlaces : [])].some(place => place && identity(place) === identity(previewPlace))
+    && ![startPlace, hotel, ...schedule.rows.map(row => row.pl), ...(discoveryActive ? discoveryPlaces : [])].some(place => place && identity(place) === identity(previewPlace))
     ? previewPlace : null;
   const markerData = (place: Place | null) => place ? [place.id, place.googlePlaceId, place.name, place.cat, place.lat, place.lng] : null;
-  const markerKey = JSON.stringify([markerData(hotel), schedule.rows.map(row => [row.it.aid, markerData(row.pl), row.start]), markerData(standalonePreview), discoveryActive, discoveryPlaces.map(markerData)]);
+  const markerKey = JSON.stringify([markerData(startPlace), dayStartTime(day), markerData(hotel), schedule.rows.map(row => [row.it.aid, markerData(row.pl), row.start]), markerData(standalonePreview), discoveryActive, discoveryPlaces.map(markerData)]);
   const routeKey = journeyLegs.map(leg => `${leg.mode}:${leg.status}:${leg.path?.map(point => `${point.lat},${point.lng}`).join(';') ?? ''}`).join('|');
   const points = useRef<Coordinate[]>([]);
-  points.current = [hotel, ...schedule.rows.map(row => row.pl)].flatMap(place => {
+  points.current = [startPlace, hotel, ...schedule.rows.map(row => row.pl)].flatMap(place => {
     const point = coordinate(place); return point ? [point] : [];
   }).concat(journeyLegs.flatMap(leg => leg.status === 'ready' && leg.path ? leg.path : []));
   const warnings = [...new Set(journeyLegs.map(leg => leg.warning).filter((warning): warning is string => !!warning))];
-  const sourceCredits = [...new Map([hotel, ...schedule.rows.map(row => row.pl), previewPlace, ...(discoveryActive ? discoveryPlaces : [])].flatMap(place => place?.attributions ?? []).map(credit => [`${credit.provider}:${credit.providerURI ?? ''}`, credit])).values()];
+  const sourceCredits = [...new Map([startPlace, hotel, ...schedule.rows.map(row => row.pl), previewPlace, ...(discoveryActive ? discoveryPlaces : [])].flatMap(place => place?.attributions ?? []).map(credit => [`${credit.provider}:${credit.providerURI ?? ''}`, credit])).values()];
   const activeTime = active ? `${active.approx && active.it.fixed === null ? '≈ ' : ''}${formatTime(active.start)}–${formatTime(active.end)}${active.it.fixed != null ? ' · booked' : ''}` : '';
   const cameraKey = resetCameraKey ?? day.id;
 
@@ -279,7 +283,7 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
     markers.current = [];
     const { AdvancedMarkerElement } = markerLibrary.current;
     const resultsByIdentity = new Map((discoveryActive ? discoveryPlaces : []).map(place => [identity(place), place]));
-    const plannedIdentities = new Set([hotel, ...schedule.rows.map(row => row.pl)].filter(Boolean).map(identity));
+    const plannedIdentities = new Set([startPlace, hotel, ...schedule.rows.map(row => row.pl)].filter(Boolean).map(identity));
     function addMarker(place: Place, content: HTMLElement, title: string, zIndex: number, activityId?: string, discoveryId?: string) {
       const position = coordinate(place);
       if (!position || !map.current) return;
@@ -294,13 +298,26 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
       const content = document.createElement(onChooseBase || result ? 'button' : 'div');
       content.className = 'dt-map-hotel';
       content.textContent = '⌂';
-      content.setAttribute('aria-label', `${hotel.name} · start and end of day${onChooseBase ? '. Change hotel' : ''}`);
-      content.title = `${hotel.name} · start and end of day`;
+      content.setAttribute('aria-label', `${hotel.name} · ${startsAtHotel ? 'start and end of day' : 'return location'}${onChooseBase ? '. Change hotel' : ''}`);
+      content.title = `${hotel.name} · ${startsAtHotel ? 'start and end of day' : 'return location'}`;
       if (onChooseBase || result) content.addEventListener('click', () => {
         if (result && latest.current.discoveryActive) latest.current.onSelectDiscovery?.(result.id);
         else latest.current.onChooseBase?.();
       });
       addMarker(hotel, content, hotel.name, 5, undefined, result?.id);
+    }
+    if (!startsAtHotel && coordinate(startPlace)) {
+      const result = resultsByIdentity.get(identity(startPlace));
+      const content = document.createElement(onChooseStart || result ? 'button' : 'div');
+      content.className = 'dt-map-hotel dt-map-start';
+      content.textContent = 'S';
+      content.setAttribute('aria-label', `${startPlace.name} · start at ${formatTime(dayStartTime(day))}${onChooseStart ? '. Change starting location' : ''}`);
+      content.title = `${startPlace.name} · start at ${formatTime(dayStartTime(day))}`;
+      if (onChooseStart || result) content.addEventListener('click', () => {
+        if (result && latest.current.discoveryActive) latest.current.onSelectDiscovery?.(result.id);
+        else latest.current.onChooseStart?.();
+      });
+      addMarker(startPlace, content, startPlace.name, 6, undefined, result?.id);
     }
     schedule.rows.forEach((row, index) => {
       const result = resultsByIdentity.get(identity(row.pl));
@@ -336,7 +353,7 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
       addMarker(standalonePreview, content, standalonePreview.name, 30);
     }
     return () => { markers.current.forEach(marker => { marker.map = null; }); markers.current = []; };
-  }, [ready, markerKey, chooseBaseEnabled]);
+  }, [ready, markerKey, chooseBaseEnabled, chooseStartEnabled]);
 
   // Keep the focused marker in the DOM when selection changes via keyboard.
   useEffect(() => {
@@ -443,8 +460,8 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
           {discoveryActive && onSearchArea && <div className="dt-map-search-area" aria-label="Map area search">
             {areaDirty || searchingArea ? <><button className="dt-map-primary" onClick={searchCurrentArea} disabled={searchingArea || areaTooWide}>{searchingArea ? 'Searching this area…' : 'Search this area'}</button>{areaTooWide && <span role="status">Zoom in to search a neighbourhood or city.</span>}</> : <span className="dt-map-search-hint">Move the map to explore another area</span>}
           </div>}
-          {!discoveryActive && !previewPlace && (!coordinate(hotel) || pendingPlace) && <div className="dt-map-location-help">
-            {!coordinate(hotel) ? <><Icon name="home" size={17} /><div><strong>Where are you staying?</strong><span>Set your base to complete each day’s route.</span></div>{onChooseBase && <button onClick={onChooseBase}>Choose hotel</button>}</> : pendingPlace ? <><Icon name="compass" size={17} /><div><strong>{pendingPlace.name}</strong><span>{missingPlaces.length} {missingPlaces.length === 1 ? 'stop needs a location' : 'stops need locations'}.</span></div>{onLocatePlace && <button onClick={() => onLocatePlace(pendingPlace.id)}>Locate stop</button>}</> : null}
+          {!discoveryActive && !previewPlace && (!coordinate(startPlace) || !coordinate(hotel) || pendingPlace) && <div className="dt-map-location-help">
+            {!coordinate(startPlace) ? <><Icon name="compass" size={17} /><div><strong>Where will this day start?</strong><span>Set a starting location to calculate your first journey.</span></div>{(onChooseStart || onChooseBase) && <button onClick={onChooseStart || onChooseBase}>Choose start</button>}</> : !coordinate(hotel) ? <><Icon name="home" size={17} /><div><strong>Where are you staying?</strong><span>Set your stay to calculate the return journey.</span></div>{onChooseBase && <button onClick={onChooseBase}>Choose hotel</button>}</> : pendingPlace ? <><Icon name="compass" size={17} /><div><strong>{pendingPlace.name}</strong><span>{missingPlaces.length} {missingPlaces.length === 1 ? 'stop needs a location' : 'stops need locations'}.</span></div>{onLocatePlace && <button onClick={() => onLocatePlace(pendingPlace.id)}>Locate stop</button>}</> : null}
           </div>}
           {selectedRow && coordinate(selectedRow.pl) && !previewPlace && !discoveryActive && <div className="dt-map-selected"><span className="dt-map-stop-number">{selectedIndex + 1}</span><div><strong>{selectedRow.pl.name}</strong><span>{activeTime}</span><PlaceCredits place={selectedRow.pl} /></div></div>}
         </>}

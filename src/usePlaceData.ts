@@ -46,7 +46,7 @@ export function usePlaceData(trip: Trip, dayIndex: number, enabled = true): {
 
   const targets: HydrationTarget[] = [];
   if (enabled) {
-    const visibleIds = new Set(['hotel', ...(trip.days[dayIndex]?.items.map(item => item.placeId) ?? []), ...trip.ideas]);
+    const visibleIds = new Set(['hotel', trip.days[dayIndex]?.startPlaceId ?? 'hotel', ...(trip.days[dayIndex]?.items.map(item => item.placeId) ?? []), ...trip.ideas]);
     const targetKeys = new Set<string>();
     for (const id of visibleIds) {
       const place = base[id];

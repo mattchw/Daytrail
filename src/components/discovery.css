@@ -22,3 +22,7 @@
 
 .dx-today small{display:block;color:#6b776a;font-size:10px;line-height:1.5;margin-top:3px}.dx-today:has(small){align-items:flex-start}.dx-today:has(small)>.dx-status-dot{margin-top:5px}
 @media(max-width:760px){.dx-today small{font-size:11px}}
+
+/* A split action keeps the quick add and makes a different day one tap away. */
+.dx-add-group{display:flex;align-items:stretch;min-width:0;margin-left:auto}.dx-add-group-split>.button{border-top-right-radius:0;border-bottom-right-radius:0}.dx-choose-add{display:grid;place-items:center;flex-shrink:0;width:30px;min-height:29px;padding:0;border:1px solid var(--teal);border-left:1px solid #ffffff4d;border-radius:0 6px 6px 0;background:var(--teal);color:white}.dx-choose-add:hover{filter:brightness(.94)}.dx-choose-add:focus-visible{outline:2px solid var(--teal);outline-offset:3px;position:relative;z-index:1}.dx-detail-actions .dx-choose-add{width:35px;min-height:35px}
+@media(max-width:760px){.dx-choose-add{width:40px;min-height:40px}.dx-add-group>.button{min-height:40px}.dx-detail-actions .dx-choose-add{width:44px;min-height:44px}.dx-detail-actions .dx-add-group>.button{min-height:44px}}

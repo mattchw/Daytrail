@@ -49,6 +49,8 @@ The app loads the Maps JavaScript API once and shares its Places and Routes libr
 - `src/googleMaps.ts`: Google API loading, place search/details, route calculation, and transient request caches.
 - `src/discoveryData.ts`: rich search, scoped map searches, ratings, photo handles, and separate detail requests.
 - `src/openingHours.ts`: local opening status, selected-date schedules, and regular-hours fallbacks.
+- `src/visitHours.ts` and `src/useVisitHours.ts`: full planned-visit checks and session-only, active-day hours loading.
+- `src/components/DayPlanForm.tsx`, `AddToTripDialog.tsx`, and `TravelLeg.tsx`: day setup, choosing an insertion position, and compact transport controls.
 - `src/useDiscovery.ts`: shared search, selected details, request versions, and mobile scroll state.
 - `src/components/DiscoveryExplorer.tsx`: photo cards and accessible place details.
 - `src/usePlaceData.ts`: fresh place-detail hydration for the active day and saved Ideas.
@@ -64,7 +66,7 @@ The app uses React, TypeScript, and Vite, with dnd kit for dragging and Lucide i
 
 Trips are saved in this browser's local storage under `daytrail.workspace.v1`. There is no account, server database, or cross-device sync. Undo history lasts for the current session. Failed saves remain visible in the interface.
 
-Search Google Maps for places in the trip's destination, then add them to a day or save them to Ideas. Select a real hotel or another starting point before calculating the first and last journeys. Each day starts at 09:00 and returns to that location.
+Search Google Maps for places in the trip's destination, then add them to a day or save them to Ideas. Select a real hotel or another starting point before calculating the first and last journeys. Day plan lets each day have its own departure time, starting location, and optional same-day finish goal. Existing plans default to a 09:00 hotel departure. Return journeys still end at the trip’s stay; finish goals never shorten visits or move bookings.
 
 The Kyoto example retains its curated descriptions. Named sample attractions resolve to map locations when their day or Idea is visible. Generic entries such as Hotel, Lunch in Arashiyama, Dinner in Pontochō, Tea ceremony, and combined neighbourhood stops require an explicit location choice. User-created custom places are never automatically matched to a business.
 
@@ -76,13 +78,15 @@ Open the trip title to edit the start date and destination time zone. Use an IAN
 
 Discover offers Attractions, Temples, Museums, Restaurants, and Cafés, with up to eight results per search. Cards include a lazy-loaded photo with author credits, Google rating and rating count, and local opening status when available. Place details show a larger photo, the selected trip date's hours, an expandable weekly schedule, and Save / Add actions. Missing photos, ratings, or hours remain explicit rather than being invented.
 
+One-click Add keeps discovery open, with an inline View itinerary action that reveals the new stop. The adjacent chooser can insert at the beginning, end, or after a named stop on any day. Names for the chosen day load on demand. Opening-hours warnings also offer the same position chooser for moving an existing stop.
+
 The search session stays in memory when switching between mobile results, place details, and the map. Back to results restores the query, filters, and scroll position. Hotel and custom-location pickers keep separate search state.
 
 Pan or zoom the map, then choose **Search this area** to search the visible bounds. A map move alone does not issue a search. Search results have distinct unnumbered pins and never become route stops until added. Discovery keeps the current viewport steady while routes refresh. **Back to the destination** resumes destination-based search, and **Fit all stops** restores the itinerary view.
 
-Opening status uses the place's local time. Current schedules cover the available upcoming dates; later trip dates show regular weekly hours and explain that holiday hours may differ. Hours are informational and do not automatically move activities. Photos, ratings, hours, and photo URLs remain session-only and are excluded from saved trips, snapshots, and exports.
+Opening status uses the place's local time. Current schedules cover the available upcoming dates; later trip dates show regular weekly hours and explain that holiday hours may differ. The itinerary checks the whole planned visit, including split schedules and overnight closing times. Warnings show when a visit is outside opening hours or has too little time before closing; regular weekly schedules are labelled provisional. Missing upstream travel keeps arrival-based checks unknown. Return-trip uncertainty does not invalidate an already-known visit. Hours never automatically move activities or change a booking. Photos, ratings, hours, and photo URLs remain session-only and are excluded from saved trips, snapshots, and exports.
 
-Search requests use explicit field lists. Ratings and opening fields can affect the Google billing tier. Photos load only when visible, detail requests happen only when a place is opened, and duplicate in-flight requests are shared. Monitor usage in the existing Google Cloud project.
+Search requests use explicit field lists. Ratings and opening fields can affect the Google billing tier. Photos load only when visible, rich detail requests happen only when a place is opened, and duplicate in-flight requests are shared. Itinerary checks use a separate hours-only field list and reuse fresh discovery details when available; notes, reorderings, and timing edits do not fetch hours again. Monitor usage in the existing Google Cloud project.
 
 ## Stored place data
 

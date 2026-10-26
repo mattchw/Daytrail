@@ -1,5 +1,5 @@
 import {useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent} from 'react';
-import {ArrowLeft, ArrowRight, Bookmark, Camera, Check, ChevronLeft, ChevronRight, Clock3, Coffee, Compass, ExternalLink, Landmark, LoaderCircle, MapPin, Plus, Search, Star, Utensils, X} from 'lucide-react';
+import {ArrowLeft, ArrowRight, Bookmark, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Coffee, Compass, ExternalLink, Landmark, LoaderCircle, MapPin, Plus, Search, Star, Utensils, X} from 'lucide-react';
 import type {Place} from '../model';
 import {getDiscoveryPhotoURL, getOpeningSummary, type DiscoveryCategory, type DiscoveryPhoto, type DiscoveryResult} from '../discoveryData';
 import './discovery.css';
@@ -28,6 +28,7 @@ export type DiscoveryExplorerProps = {
   onRetryDetails?: () => void;
   onSave: (place: Place) => void;
   onAdd: (place: Place) => void;
+  onChooseAdd?: (place: Place) => void;
   statusOf: (id: string) => string;
   onClose?: () => void;
   onCustom?: () => void;
@@ -100,7 +101,10 @@ function PlaceActions({result,props}: {result:DiscoveryResult;props:DiscoveryExp
   const status=props.statusOf(result.place.id),saved=status==='In Ideas';
   return <div className="dx-place-actions">
     {status?<span className="dx-saved"><Check size={13}/>{status}</span>:<button type="button" className="dx-save" onClick={()=>props.onSave(result.place)} aria-label={`Save ${result.place.name} to Ideas`}><Bookmark size={14}/>Save</button>}
-    {(!status||saved)&&<button type="button" className="button primary small" onClick={()=>props.onAdd(result.place)} aria-label={`Add ${result.place.name} to ${props.dayLabel}`}><Plus size={13}/>Add to {props.dayLabel}</button>}
+    {(!status||saved)&&<div className={`dx-add-group ${props.onChooseAdd?'dx-add-group-split':''}`}>
+      <button type="button" className="button primary small" onClick={()=>props.onAdd(result.place)} aria-label={`Add ${result.place.name} to ${props.dayLabel}`}><Plus size={13}/>Add to {props.dayLabel}</button>
+      {props.onChooseAdd&&<button type="button" className="dx-choose-add" onClick={()=>props.onChooseAdd?.(result.place)} aria-label={`Choose day and position for ${result.place.name}`} title="Choose a day and position"><ChevronDown size={15}/></button>}
+    </div>}
   </div>;
 }
 
