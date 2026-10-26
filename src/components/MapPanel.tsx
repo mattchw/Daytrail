@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { CATEGORIES, dayStartPlace, dayStartTime, formatDuration, formatTime } from '../model';
-import type { Activity, Day, Place, schedule as computeSchedule } from '../model';
+import type { Day, Place, schedule as computeSchedule } from '../model';
 import { GOOGLE_MAP_ID, loadGoogleMaps } from '../googleMaps';
 import './map.css';
 
@@ -16,7 +16,7 @@ type Props = {
   onSavePlace: (id: string) => void;
   onAddPlace: (id: string) => void;
   placeStatus: (id: string) => string;
-  proposed: Activity[] | null;
+  comparisonLabel?: string;
   onOpenDetails?: () => void;
   destination?: string;
   onChooseBase?: () => void;
@@ -89,7 +89,7 @@ function RouteSample({ mode }: { mode: string }) {
   return <svg width="24" height="6" viewBox="0 0 24 6" aria-hidden="true"><path d="M2 3h20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={mode === 'walk' ? '.1 5' : mode === 'transit' ? '6 4' : undefined} /></svg>;
 }
 
-export default function MapPanel({ day, places, schedule, selected, onSelect, previewPlace, onClosePreview, onSavePlace, onAddPlace, placeStatus, onOpenDetails, destination = 'your destination', onChooseBase, onChooseStart, onLocatePlace, loadingRoutes = false, discoveryActive = false, discoveryPlaces = [], discoverySelectedId = null, discoveryResultsKey = '', discoveryScope = 'destination', onSelectDiscovery, onSearchArea, searchingArea = false, onBackToDiscovery, resetCameraKey }: Props) {
+export default function MapPanel({ day, places, schedule, selected, onSelect, previewPlace, onClosePreview, onSavePlace, onAddPlace, placeStatus, onOpenDetails, destination = 'your destination', onChooseBase, onChooseStart, onLocatePlace, loadingRoutes = false, discoveryActive = false, discoveryPlaces = [], discoverySelectedId = null, discoveryResultsKey = '', discoveryScope = 'destination', onSelectDiscovery, onSearchArea, searchingArea = false, onBackToDiscovery, resetCameraKey, comparisonLabel }: Props) {
   const surface = useRef<HTMLDivElement>(null);
   const map = useRef<google.maps.Map | null>(null);
   const maps = useRef<typeof google.maps | null>(null);
@@ -442,7 +442,7 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
 
   return <section className={`dt-map${discoveryActive ? ' is-discovering' : ''}`} aria-label="Itinerary map">
     <div className="dt-map-surface">
-      <div className="dt-map-heading"><Icon name="compass" size={18} /><div><strong>{day.label} <span>·</span> {day.title}</strong><span>{schedule.rows.length} stops <i>·</i> {loadingRoutes ? 'Updating journeys…' : `${formatDuration(schedule.travel)} ${schedule.unknown ? 'known travel' : 'travel'}`}</span></div><span className="dt-map-live-label">Google Maps</span></div>
+      <div className="dt-map-heading"><Icon name="compass" size={18} /><div><strong>{comparisonLabel||day.label} <span>·</span> {day.title}</strong><span>{schedule.rows.length} stops <i>·</i> {loadingRoutes ? 'Updating journeys…' : `${formatDuration(schedule.travel)} ${schedule.unknown ? 'known travel' : 'travel'}`}</span></div><span className="dt-map-live-label">Google Maps</span></div>
       <div className="dt-map-viewport">
         <div className="dt-map-google" ref={surface} aria-label={`Map of your itinerary in ${destination}`} />
         {!ready && <div className="dt-map-loading" role={error ? 'alert' : 'status'}>
@@ -486,7 +486,7 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
       </div>}
       {!previewPlace && discoveryActive && onBackToDiscovery && <div className="dt-map-mobile-results"><div><strong>{discoveryPlaces.length ? `${discoveryPlaces.length} places to explore` : 'Discover your next stop'}</strong><span>Tap a place pin to see its details.</span></div><button className="dt-map-primary" onClick={onBackToDiscovery}>Back to results<Icon name="right" size={14} /></button></div>}
       {!previewPlace && !discoveryActive && <div className="dt-map-mobile-stop">
-        {active ? <><div className="dt-map-mobile-stop-main"><span className="dt-map-stop-number">{activeIndex + 1}</span><div><strong>{active.pl.name}</strong><span>{activeTime}</span><PlaceCredits place={active.pl} /></div></div><div className="dt-map-stop-actions"><button className="dt-map-secondary" onClick={() => goToStop(-1)} aria-label="Previous stop"><Icon name="left" /></button><button className="dt-map-secondary" onClick={() => goToStop(1)} aria-label="Next stop"><Icon name="right" /></button><button className="dt-map-primary" onClick={() => { onSelect(active.it.aid); onOpenDetails?.(); }}>Details<Icon name="right" size={14} /></button></div></> : <p>No stops yet. Add a place to start your route.</p>}
+        {active ? <><div className="dt-map-mobile-stop-main"><span className="dt-map-stop-number">{activeIndex + 1}</span><div><strong>{active.pl.name}</strong><span>{activeTime}</span><PlaceCredits place={active.pl} /></div></div><div className="dt-map-stop-actions"><button className="dt-map-secondary" onClick={() => goToStop(-1)} aria-label="Previous stop"><Icon name="left" /></button><button className="dt-map-secondary" onClick={() => goToStop(1)} aria-label="Next stop"><Icon name="right" /></button>{onOpenDetails && <button className="dt-map-primary" onClick={() => { onSelect(active.it.aid); onOpenDetails(); }}>Details<Icon name="right" size={14} /></button>}</div></> : <p>No stops yet. Add a place to start your route.</p>}
       </div>}
     </div>
   </section>;
