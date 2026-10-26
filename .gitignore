@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.openai/local/
+.env*
+!.env.example
+reference/
+qa/
+*.tsbuildinfo

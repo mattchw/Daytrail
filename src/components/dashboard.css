@@ -1,0 +1,89 @@
+.dt-dash { height: 100dvh; overflow-y: auto; background: #f5f1ea; color: #1e2726; font-family: 'Figtree', system-ui, sans-serif; }
+.dt-dash *, .dt-dash *::before, .dt-dash *::after { box-sizing: border-box; }
+.dt-dash button, .dt-dash input { font: inherit; }
+.dt-dash button { cursor: pointer; }
+.dt-dash button:focus-visible, .dt-dash input:focus-visible { outline: 3px solid #0e6e68; outline-offset: 3px; }
+.dt-dash-header { height: 76px; display: flex; align-items: center; padding: 0 max(28px, calc((100vw - 1180px) / 2)); gap: 44px; border-bottom: 1px solid #e4ddd1; background: #fffcf7; }
+.dt-dash-brand { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 750; letter-spacing: -.8px; }
+.dt-dash-brandmark { width: 36px; height: 36px; display: grid; place-items: center; color: #fff; background: #0e6e68; border-radius: 11px; }
+.dt-dash-nav { height: 100%; display: flex; align-items: center; font-size: 14px; font-weight: 650; color: #0e6e68; position: relative; }
+.dt-dash-nav::after { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; border-radius: 3px 3px 0 0; background: #0e6e68; content: ''; }
+.dt-dash-person { margin-left: auto; font-size: 11px; font-weight: 700; color: #51634a; border: 1px solid #cfd6c6; border-radius: 50%; background: #e5eadc; width: 34px; height: 34px; display: grid; place-items: center; }
+.dt-dash-main { max-width: 1236px; margin: 0 auto; padding: 0 28px; }
+.dt-dash-welcome { display: flex; align-items: center; justify-content: space-between; gap: 36px; padding: 60px 0 57px; }
+.dt-dash-eyebrow { display: flex; align-items: center; gap: 8px; color: #0e6e68; font-size: 12px; font-weight: 650; margin: 0 0 18px; }
+.dt-dash-welcome h1 { margin: 0; font-size: clamp(36px, 3.8vw, 49px); line-height: 1.13; letter-spacing: -1.9px; font-weight: 650; }
+.dt-dash-intro { color: #66706a; font-size: 14px; line-height: 1.65; margin: 18px 0 24px; }
+.dt-dash-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 10px; min-height: 42px; padding: 0 16px; border: 1px solid transparent; font-size: 13px !important; font-weight: 650 !important; transition: background .15s ease, box-shadow .15s ease; }
+.dt-dash-primary { background: #0e6e68; color: #fff; border-color: #0e6e68; }
+.dt-dash-primary:hover { background: #0b5550; border-color: #0b5550; box-shadow: 0 3px 10px #0e6e6814; }
+.dt-dash-secondary { background: #fffcf7; border-color: #d9d1c3; color: #1e2726; }
+.dt-dash-secondary:hover { background: #f5f1ea; }
+.dt-dash-welcome-art { position: relative; width: 400px; padding: 20px 15px; margin-right: 20px; flex: 0 1 400px; }
+.dt-dash-art-halo { width: 295px; height: 295px; background: #e9e5d8; border-radius: 50%; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); }
+.dt-dash-art-paper { position: relative; padding: 14px 14px 12px; background: #fffcf7; border: 1px solid #e0d9cd; border-radius: 3px; transform: rotate(-5deg); box-shadow: 0 10px 24px #483e2912, 0 2px 3px #483e2908; }
+.dt-dash-art-label { display: block; padding: 0 0 12px; text-transform: uppercase; font-size: 9px; color: #788072; font-weight: 650; letter-spacing: 2.1px; }
+.dt-dash-journey { display: block; width: 100%; height: 100%; object-fit: cover; }
+.dt-dash-art-caption { display: flex; gap: 6px; align-items: center; font-size: 10px; color: #51635a; margin-top: 13px; }
+.dt-dash-art-stamp { position: absolute; bottom: 12px; right: -6px; background: #e7eee2; color: #43604c; border: 1px dashed #7e977c; outline: 5px solid #e7eee2; width: 75px; height: 75px; border-radius: 50%; transform: rotate(13deg); font-size: 9px; font-weight: 700; letter-spacing: 1px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+.dt-dash-trips { border-top: 1px solid #e0d9cd; padding-top: 31px; }
+.dt-dash-section-heading { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 23px; }
+.dt-dash-section-heading h2 { font-size: 20px; letter-spacing: -.4px; margin: 0; display: flex; align-items: center; gap: 9px; }
+.dt-dash-section-heading h2 > span { display: grid; place-items: center; min-width: 23px; padding: 0 6px; height: 23px; border: 1px solid #dcd5ca; border-radius: 7px; font-size: 11px; color: #66706a; font-weight: 500; letter-spacing: 0; }
+.dt-dash-section-heading p { color: #707770; font-size: 12px; margin: 7px 0 0; }
+.dt-dash-device { display: flex; align-items: center; gap: 5px; color: #6c776d; font-size: 11px; padding-top: 7px; }
+.dt-dash-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+.dt-dash-card { background: #fffcf7; border: 1px solid #e0d9cd; border-radius: 14px; overflow: hidden; transition: box-shadow .2s ease, border-color .2s ease; }
+.dt-dash-card:hover { border-color: #c2cbbb; box-shadow: 0 6px 22px #3f4e3610; }
+.dt-dash-card-open { width: 100%; text-align: left; padding: 0; color: inherit; background: transparent; border: 0; display: block; }
+.dt-dash-card-open:focus-visible { outline-offset: -4px !important; border-radius: 12px; }
+.dt-dash-card-art { height: 177px; position: relative; overflow: hidden; }
+.dt-dash-card-art .dt-dash-journey { transform: scale(1.03); transition: transform .3s ease; }
+.dt-dash-card-open:hover .dt-dash-journey { transform: scale(1.07); }
+.dt-dash-destination { position: absolute; top: 14px; left: 14px; right: 14px; width: fit-content; max-width: calc(100% - 28px); display: flex; align-items: center; gap: 5px; background: #fffcf7eb; border: 1px solid #ffffff70; padding: 5px 9px; border-radius: 6px; color: #3d574b; font-size: 10px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-dash-destination svg { flex-shrink: 0; }
+.dt-dash-card-info { padding: 19px 19px 16px; }
+.dt-dash-card-info h3 { font-size: 18px; line-height: 1.3; margin: 0 0 9px; font-weight: 650; letter-spacing: -.35px; overflow-wrap: anywhere; }
+.dt-dash-card-dates { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #737b74; margin: 0; }
+.dt-dash-card-dates svg { flex-shrink: 0; }
+.dt-dash-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: #737b74; margin-top: 21px; }
+.dt-dash-dot { padding: 0 7px; color: #b0b5aa; }
+.dt-dash-open-label { display: flex; align-items: center; gap: 6px; color: #0e6e68; font-weight: 650; }
+.dt-dash-card-actions { display: flex; justify-content: space-between; align-items: center; min-height: 43px; padding: 3px 12px; border-top: 1px solid #eee8de; background: #fbf8f1; }
+.dt-dash-card-actions button { display: inline-flex; align-items: center; gap: 5px; color: #72796e; border: 0; background: none; min-height: 34px; padding: 0 7px; border-radius: 6px; font-size: 10px; }
+.dt-dash-card-actions button:hover { background: #ede9e0; color: #263e34; }
+.dt-dash-card-actions .dt-dash-delete-trigger:hover, .dt-dash-card-actions .dt-dash-delete-action { color: #a34a36; }
+.dt-dash-delete-confirm { display: flex; align-items: center; gap: 6px; width: 100%; }
+.dt-dash-delete-confirm > span { font-size: 10px; color: #884d39; flex: 1; }
+.dt-dash-delete-confirm .dt-dash-delete-action { font-weight: 650; }
+.dt-dash-new-card { min-height: 340px; border: 1px dashed #ccc6b7; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px 26px; background: #f8f5ee; color: #414f44; transition: background .15s ease, border-color .15s ease; }
+.dt-dash-new-card:hover { background: #eef0e7; border-color: #91a292; }
+.dt-dash-new-icon { display: grid; place-items: center; width: 47px; height: 47px; color: #657961; border: 1px solid #d8ddcd; background: #e9eddf; border-radius: 50%; margin-bottom: 20px; }
+.dt-dash-new-card strong { font-size: 16px; font-weight: 650; }
+.dt-dash-new-card > span:not(.dt-dash-new-icon):not(.dt-dash-new-link) { font-size: 12px; color: #7b8174; line-height: 1.6; margin-top: 8px; max-width: 220px; }
+.dt-dash-new-link { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650; color: #0e6e68; margin-top: 25px; }
+.dt-dash-footer { display: flex; align-items: center; justify-content: center; gap: 7px; color: #8a8e83; font-size: 10px; padding: 32px 0; line-height: 1.5; }
+.dt-dash-footer-dot { width: 5px; height: 5px; background: #a5b39a; border-radius: 50%; flex: 0 0 5px; }
+.dt-dash-dialog { width: min(510px, calc(100vw - 32px)); padding: 0; max-height: calc(100dvh - 40px); border: 1px solid #ded7c9; border-radius: 20px; background: #fffcf7; color: #1e2726; box-shadow: 0 20px 90px #183c3c30; }
+.dt-dash-dialog::backdrop { background: #1e332e55; backdrop-filter: blur(3px); }
+.dt-dash-form { padding: 28px; }
+.dt-dash-form-heading { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 17px; }
+.dt-dash-form-icon { width: 48px; height: 48px; display: grid; place-items: center; color: #0e6e68; background: #e3eee6; border: 1px solid #cfdfd1; border-radius: 14px; }
+.dt-dash-close { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: none; background: transparent; color: #737b72; }
+.dt-dash-close:hover { background: #eee9de; }
+.dt-dash-form h2 { font-size: 25px; letter-spacing: -.7px; margin: 0; }
+.dt-dash-form > p:first-of-type { color: #70776c; font-size: 13px; margin: 7px 0 24px; }
+.dt-dash-field { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 600; margin-bottom: 17px; min-width: 0; }
+.dt-dash-field input { height: 43px; min-width: 0; width: 100%; padding: 0 12px; border: 1px solid #d9d1c3; border-radius: 9px; background: #f8f5ee; color: #26372e; font-size: 13px; font-weight: 400; }
+.dt-dash-field input::placeholder { color: #9a9d91; }
+.dt-dash-field input:focus { border-color: #0e6e68; }
+.dt-dash-form-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; }
+.dt-dash-field-hint { font-size: 10px; font-weight: 400; color: #8a8e81; }
+.dt-dash-form-note { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; line-height: 1.55; color: #6f786b; padding: 11px 12px; background: #eef0e7; border: 1px solid #e1e6d7; border-radius: 8px; margin: 0 0 24px; }
+.dt-dash-form-note svg { flex: 0 0 15px; margin-top: 1px; }
+.dt-dash-form-error { font-size: 12px; color: #9a3b12; background: #f9e9dd; border-radius: 7px; padding: 9px 11px; margin: 0 0 14px; }
+.dt-dash-form-actions { display: flex; justify-content: flex-end; gap: 9px; }
+@media (min-width: 1450px) { .dt-dash-welcome { padding-top: 72px; padding-bottom: 72px; } }
+@media (max-width: 960px) { .dt-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dt-dash-welcome-art { flex-basis: 310px; margin-right: 6px; } .dt-dash-art-halo { width: 250px; height: 250px; top: -10px; } .dt-dash-welcome { padding-top: 45px; padding-bottom: 45px; gap: 10px; } .dt-dash-welcome h1 { font-size: 37px; } .dt-dash-intro { font-size: 12px; } .dt-dash-eyebrow { font-size: 11px; } }
+@media (max-width: 650px) { .dt-dash-header { height: 66px; padding: 0 20px; gap: 26px; } .dt-dash-brand { font-size: 19px; gap: 8px; } .dt-dash-brandmark { width: 32px; height: 32px; border-radius: 10px; } .dt-dash-nav { font-size: 12px; } .dt-dash-main { padding: 0 20px; } .dt-dash-welcome { padding: 36px 0 32px; } .dt-dash-welcome-art { display: none; } .dt-dash-welcome h1 { font-size: 37px; letter-spacing: -1.6px; } .dt-dash-intro { font-size: 13px; } .dt-dash-eyebrow { margin-bottom: 15px; } .dt-dash-grid { grid-template-columns: 1fr; gap: 18px; } .dt-dash-card-art { height: 180px; } .dt-dash-new-card { min-height: 225px; } .dt-dash-new-icon { width: 40px; height: 40px; margin-bottom: 13px; } .dt-dash-new-link { margin-top: 17px; } .dt-dash-section-heading { gap: 12px; } .dt-dash-section-heading h2 { font-size: 19px; } .dt-dash-device { font-size: 9px; padding-top: 6px; } .dt-dash-section-heading p { font-size: 11px; } .dt-dash-card-actions button { min-height: 40px; font-size: 11px; } .dt-dash-delete-confirm > span { font-size: 11px; } .dt-dash-footer { text-align: center; align-items: flex-start; max-width: 285px; margin: auto; } .dt-dash-footer-dot { margin-top: 5px; } .dt-dash-form { padding: 23px; } .dt-dash-form h2 { font-size: 24px; } .dt-dash-form-row { gap: 10px; } .dt-dash-field input { font-size: 16px; } }
+@media (prefers-reduced-motion: reduce) { .dt-dash *, .dt-dash *::before, .dt-dash *::after { transition: none !important; } }
