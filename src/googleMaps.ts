@@ -179,7 +179,16 @@ export function hasCoordinates(place: Place | undefined): place is Place & { lat
 }
 
 interface RoutesResult {
-  routes?: { durationMillis?: number; distanceMeters?: number; path?: { lat: number | (() => number); lng: number | (() => number) }[]; warnings?: string[] }[];
+  routes?: { durationMillis?: number; distanceMeters?: number; legs?: {steps?:{distanceMeters?:number;travelMode?:string}[]}[]; path?: { lat: number | (() => number); lng: number | (() => number) }[]; warnings?: string[] }[];
+}
+/** Count transit access/transfer walks only when every returned step is classified. */
+export function routeWalkingMeters(route: NonNullable<RoutesResult['routes']>[number], mode: Mode): number | undefined {
+  if (mode === 'drive') return 0;
+  if (mode === 'walk') return Number.isFinite(route.distanceMeters) && route.distanceMeters! >= 0 ? route.distanceMeters : undefined;
+  if (mode !== 'transit' || !route.legs?.length || route.legs.some(leg => !leg.steps?.length)) return undefined;
+  const steps = route.legs.flatMap(leg => leg.steps!);
+  if (steps.some(step => !['WALKING','TRANSIT'].includes(step.travelMode ?? '') || !Number.isFinite(step.distanceMeters) || step.distanceMeters! < 0)) return undefined;
+  return steps.reduce((sum,step) => sum + (step.travelMode === 'WALKING' ? step.distanceMeters! : 0), 0);
 }
 interface RouteLibrary {
   Route: { computeRoutes(request: {
@@ -197,9 +206,10 @@ export function unavailableJourney(mode: Mode, reason: string): Journey {
 }
 
 export function computeJourney(from: Place, to: Place, mode: Mode, departure?: Date): Promise<Journey> {
+  if (mode === 'flight') return Promise.resolve(unavailableJourney(mode, 'Flight times come from your booking. Google does not calculate flight routes.'));
   if (!hasCoordinates(from) || !hasCoordinates(to)) return Promise.resolve(unavailableJourney(mode, 'Choose a map location'));
   if ((from.googlePlaceId && from.googlePlaceId === to.googlePlaceId) || (from.lat === to.lat && from.lng === to.lng)) {
-    return Promise.resolve({ min: 0, km: '0.0', mode, status: 'ready', path: [] });
+    return Promise.resolve({ min: 0, km: '0.0', distanceMeters:0, walkingMeters:0, mode, status: 'ready', path: [] });
   }
   if (mode === 'transit' && (!departure || !Number.isFinite(departure.getTime()))) return Promise.resolve(unavailableJourney(mode, 'Confirm the departure time before calculating transit'));
   const key = JSON.stringify([from.googlePlaceId, from.lat, from.lng, to.googlePlaceId, to.lat, to.lng, mode, mode === 'transit' ? departure!.toISOString() : null]);
@@ -214,16 +224,16 @@ export function computeJourney(from: Place, to: Place, mode: Mode, departure?: D
         origin: from.googlePlaceId ? new GooglePlace({ id: from.googlePlaceId }) : { lat: from.lat, lng: from.lng },
         destination: to.googlePlaceId ? new GooglePlace({ id: to.googlePlaceId }) : { lat: to.lat, lng: to.lng },
         travelMode: mode === 'walk' ? 'WALKING' : mode === 'drive' ? 'DRIVING' : 'TRANSIT',
-        fields: ['durationMillis', 'distanceMeters', 'path', 'warnings'],
+        fields: ['durationMillis', 'distanceMeters', 'path', 'warnings', ...(mode === 'transit' ? ['legs'] : [])],
         ...(mode === 'drive' ? { routingPreference: 'TRAFFIC_UNAWARE' as const } : {}),
         ...(mode === 'transit' ? { departureTime: departure } : {}),
       }));
       const route = response.routes?.[0];
-      if (!route || !Number.isFinite(route.durationMillis) || !Number.isFinite(route.distanceMeters)) {
+      if (!route || !Number.isFinite(route.durationMillis) || !Number.isFinite(route.distanceMeters) || route.durationMillis! < 0 || route.distanceMeters! < 0) {
         return unavailableJourney(mode, 'No route is available for this journey');
       }
       const path = (route.path ?? []).map(point => ({ lat: typeof point.lat === 'function' ? point.lat() : point.lat, lng: typeof point.lng === 'function' ? point.lng() : point.lng })).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
-      return { min: Math.ceil(route.durationMillis! / 60_000), km: (route.distanceMeters! / 1000).toFixed(1), mode, status: 'ready', path, warning: route.warnings?.join(' ') };
+      return { min: Math.ceil(route.durationMillis! / 60_000), km: (route.distanceMeters! / 1000).toFixed(1), distanceMeters:route.distanceMeters!, ...(routeWalkingMeters(route,mode) !== undefined ? {walkingMeters:routeWalkingMeters(route,mode)} : {}), mode, status: 'ready', path, warning: route.warnings?.join(' ') };
     } catch (error) { return unavailableJourney(mode, mapsErrorMessage(error, 'routes')); }
   }, journey => journey.min !== null);
 }

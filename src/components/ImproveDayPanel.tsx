@@ -1,6 +1,6 @@
 import {useId} from 'react';
 import {ArrowDown, ArrowRight, Check, CheckCircle2, Clock3, Footprints, Info, LoaderCircle, LockKeyhole, Map, MapPin, RefreshCw, Route, ShieldCheck, X} from 'lucide-react';
-import {dayStartTime, formatDuration, formatTime, type Day, type Place} from '../model';
+import {dayEndPlace, dayStartPlace, dayStartTime, formatDuration, formatTime, type Day, type Place} from '../model';
 import type {ImproveCandidate} from '../improveDay';
 import type {ImproveState} from '../useImproveDay';
 
@@ -23,9 +23,9 @@ export interface ImproveDayPanelProps {
 const phaseLabels = {
   checking: ['Checking your places', 'Getting the opening hours available for your visit date.'],
   comparing: ['Comparing routes', 'Looking for less travel while keeping your bookings in place.'],
-  verifying: ['Checking the whole day', 'Verifying the journeys, visit times and return before making a suggestion.'],
+  verifying: ['Checking the whole day', 'Verifying the journeys, visit times and final arrival before making a suggestion.'],
 } as const;
-const fixLabels: Record<ImproveFixAction, string> = {'day-plan': 'Review day plan', locations: 'Find mapped locations', modes: 'Review transport'};
+const fixLabels: Record<ImproveFixAction, string> = {'day-plan': 'Review start & timing', locations: 'Find mapped locations', modes: 'Review transport'};
 const plural = (count: number, singular: string, many = `${singular}s`) => `${count} ${count === 1 ? singular : many}`;
 
 function ComparisonMetrics({current, suggested, day}: {current: ImproveCandidate; suggested: ImproveCandidate; day: Day}) {
@@ -35,7 +35,7 @@ function ComparisonMetrics({current, suggested, day}: {current: ImproveCandidate
   const hoursConflicts = (candidate: ImproveCandidate) => Object.values(candidate.evaluation.checks).filter(check => check.status === 'closed' || check.status === 'short').length;
   const rows = [
     {label: 'Travel time', current: formatDuration(before.schedule.travel), suggested: formatDuration(after.schedule.travel), better: after.schedule.travel < before.schedule.travel},
-    {label: 'Back at your stay', current: formatTime(before.schedule.finish), suggested: formatTime(after.schedule.finish), better: after.schedule.finish < before.schedule.finish},
+    {label: 'Arrival at end point', current: formatTime(before.schedule.finish), suggested: formatTime(after.schedule.finish), better: after.schedule.finish < before.schedule.finish},
     {label: 'Late bookings', current: String(currentBookings), suggested: String(suggestedBookings), better: suggestedBookings < currentBookings},
     {label: 'Hours conflicts', current: String(hoursConflicts(current)), suggested: String(hoursConflicts(suggested)), better: hoursConflicts(suggested) < hoursConflicts(current)},
     {label: 'Hours checked', current: `${day.items.length - before.unknownHours}/${day.items.length}`, suggested: `${day.items.length - after.unknownHours}/${day.items.length}`, better: false},
@@ -133,8 +133,9 @@ export default function ImproveDayPanel({day, places, locks, onLocksChange, stat
         <div className="improve-preview-switch" role="group" aria-label="Preview route"><button aria-pressed={preview === 'current'} onClick={() => onPreviewChange('current')}>Current</button><button aria-pressed={preview === 'suggested'} onClick={() => onPreviewChange('suggested')}>Suggested <span>{plural(proposal.suggested.moved, 'move')}</span></button></div>
         <p className="improve-preview-help">The timeline and map show the {preview} order.</p>
         {onShowMap && <button className="button small full improve-view-map" onClick={onShowMap}><Map size={15}/>View {preview} route on map<ArrowRight size={14}/></button>}
+        <div className="improve-route-end"><MapPin size={13}/><span>Start from {dayStartPlace(day, places).name}</span><time>{formatTime(dayStartTime(day))}</time></div>
         {activeCandidate && <StopOrder candidate={activeCandidate} day={day} places={places} locks={locks} suggested={preview === 'suggested'}/>}
-        <div className="improve-route-end"><MapPin size={13}/><span>Return to {places.hotel?.name ?? 'your stay'}</span><time>{activeCandidate && formatTime(activeCandidate.evaluation.schedule.finish)}</time></div>
+        <div className="improve-route-end"><MapPin size={13}/><span>End at {dayEndPlace(day, places).name}</span><time>{activeCandidate && formatTime(activeCandidate.evaluation.schedule.finish)}</time></div>
         <div className="improve-assurances"><p><ShieldCheck size={14}/>No late bookings or known opening-hours conflicts in the suggested order.</p>{proposal.suggested.evaluation.unknownHours > 0 && <p className="is-warning"><Info size={14}/><span>Hours still need confirming for {unknownNames.join(', ')}.</span></p>}{proposal.suggested.evaluation.regularHours > 0 && <p><Clock3 size={14}/><span>{plural(proposal.suggested.evaluation.regularHours, 'stop')} checked against usual opening hours. Date-specific changes may apply.</span></p>}</div>
         {!!proposal.hoursErrors && <p className="improve-provider-note">Some opening-hours details could not load. Review the places marked “Hours to confirm”.</p>}
         {!proposal.warning && day.endMode === 'walk' && <p className="improve-provider-note"><Footprints size={13}/>Walking directions may not include every pavement or pedestrian path. Check conditions along the route.</p>}

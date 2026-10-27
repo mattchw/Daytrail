@@ -7,11 +7,14 @@ const compile = name => ts.transpileModule(readFileSync(new URL(name, import.met
 }).outputText;
 const dataURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const modelURL = dataURL(compile('./model.ts'));
+const openingURL = dataURL(compile('./openingHours.ts'));
+const visitURL = dataURL(compile('./visitHours.ts').replace(/from ['"]\.\/openingHours['"]/g, `from ${JSON.stringify(openingURL)}`));
 const serviceURL = dataURL(compile('./googleMaps.ts').replaceAll('import.meta.env', '({})'));
 const service = await import(serviceURL);
 const hookURL = dataURL(compile('./useLiveRoutes.ts')
   .replace(/from ['"]react['"]/g, `from ${JSON.stringify(import.meta.resolve('react'))}`)
   .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
+  .replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`)
   .replace(/from ['"]\.\/googleMaps['"]/g, `from ${JSON.stringify(serviceURL)}`));
 const { tripDayDate, zonedDeparture, transitDateReason, calculateDayRoutes, pendingLegs, routeInputSignature, reuseReadyStaticLegs } = await import(hookURL);
 let passed = 0;
@@ -27,6 +30,18 @@ const now = Date.parse('2026-10-26T00:00:00Z');
 await check('trip date uses calendar days across leap and year boundaries', () => {
   assert.equal(tripDayDate('2028-02-28', 1), '2028-02-29');
   assert.equal(tripDayDate('2028-12-31', 1), '2029-01-01');
+});
+await check('opening waits are included in the following transit departure', async()=>{
+ const planned=input([activity('a'),activity('b',{mode:'transit'})],{hours:{a:{fetchedAt:0,regularHours:{periods:[{open:{day:0,hour:10,minute:0},close:{day:0,hour:17,minute:0}}],weekdayDescriptions:[]}}}});
+ const departures=[];
+ await calculateDayRoutes(planned,undefined,()=>true,async(from,to,mode,departure)=>{departures.push({to:to.id,departure:departure?.toISOString()});return ready(mode,10);},now);
+ assert.equal(departures.find(item=>item.to==='b').departure,'2026-11-01T02:00:00.000Z');
+});
+await check('unknown opening hours do not invent a delayed transit departure',async()=>{
+ const planned=input([activity('a'),activity('b',{mode:'transit'})],{hours:{a:{fetchedAt:0}}});
+ const departures=[];
+ await calculateDayRoutes(planned,undefined,()=>true,async(from,to,mode,departure)=>{departures.push({to:to.id,departure:departure?.toISOString()});return ready(mode,10);},now);
+ assert.equal(departures.find(item=>item.to==='b').departure,'2026-11-01T01:10:00.000Z');
 });
 await check('transit departures use the destination timezone and DST', () => {
   assert.equal(zonedDeparture('2026-07-15', 540, 'Europe/London').toISOString(), '2026-07-15T08:00:00.000Z');
@@ -105,6 +120,35 @@ await check('empty days do not request a hotel round trip', async () => {
   assert.equal(calls, 0);
   assert.equal(result.return.min, 0);
 });
+await check('a transfer-only day routes from the airport at the selected local departure time', async () => {
+  const plan = input([]); Object.assign(plan.day, { startPlaceId: 'c', startTime: 780, endMode: 'transit' });
+  assert.equal(pendingLegs(plan).return.status, 'loading');
+  const calls = [], updates = [];
+  const result = await calculateDayRoutes(plan, id => updates.push(id), undefined,
+    async (from, to, mode, departure) => { calls.push([from.id, to.id, mode, departure.toISOString()]); return ready(mode, 55); }, now);
+  assert.deepEqual(calls, [['c', 'hotel', 'transit', '2026-11-01T04:00:00.000Z']]);
+  assert.deepEqual(updates, ['return']);
+  assert.equal(result.return.min, 55);
+});
+await check('the final airport journey follows completed visits and does not require a hotel location', async () => {
+  const plan = input([activity('a', { duration: 30 })], { places: { a: places.a, b: places.b, c: places.c } });
+  Object.assign(plan.day, { startPlaceId: 'b', endPlaceId: 'c', startTime: 780, endMode: 'transit' });
+  const calls = [];
+  await calculateDayRoutes(plan, undefined, undefined, async (from, to, mode, departure) => {
+    calls.push([from.id, to.id, departure?.toISOString()]); return ready(mode, 20);
+  }, now);
+  assert.deepEqual(calls, [['b', 'a', undefined], ['a', 'c', '2026-11-01T04:50:00.000Z']]);
+});
+await check('an unlocated empty-day destination stays unknown rather than becoming zero travel', async () => {
+  const plan = input([], { places: { ...places, c: { ...places.c, lat: undefined } } });
+  plan.day.endPlaceId = 'c';
+  assert.equal(pendingLegs(plan).return.status, 'unavailable');
+  let calls = 0;
+  const result = await calculateDayRoutes(plan, undefined, undefined, async () => { calls++; return ready('walk'); }, now);
+  assert.equal(calls, 0);
+  assert.equal(result.return.min, null);
+  assert.match(result.return.reason, /map location/);
+});
 await check('stale calculations stop before requesting subsequent legs', async () => {
   let active = true; let calls = 0; let updates = 0;
   await calculateDayRoutes(input([activity('a'), activity('b')]), () => updates++, () => active,
@@ -178,6 +222,27 @@ await check('a changed starting point invalidates the first pair while time edit
   changed.day.startPlaceId = 'hotel';
   assert.equal(reuseReadyStaticLegs(changed, prior, legs).a.min, 48);
 });
+await check('changing the final endpoint invalidates only its route and refreshes the route signature', () => {
+  const prior = input([activity('a'), activity('b')]);
+  const legs = { a: ready('walk', 48), b: ready('walk', 17), return: ready('walk', 45) };
+  const changed = structuredClone(prior); changed.day.endPlaceId = 'c';
+  const reused = reuseReadyStaticLegs(changed, prior, legs);
+  assert.equal(reused.a.min, 48); assert.equal(reused.b.min, 17); assert.equal(reused.return.min, null);
+  const trip = { startDate: prior.date, timezone: prior.timezone, days: [prior.day] };
+  const original = routeInputSignature(trip, 0, places);
+  prior.day.endPlaceId = 'hotel'; assert.equal(routeInputSignature(trip, 0, places), original);
+  prior.day.endPlaceId = 'c'; const airport = routeInputSignature(trip, 0, places);
+  assert.notEqual(airport, original); assert.ok(JSON.parse(airport).places.c);
+  assert.notEqual(routeInputSignature(trip, 0, { ...places, c: { ...places.c, lng: 136 } }), airport);
+});
+await check('a direct transfer can reuse only the exact same static endpoint pair', () => {
+  const prior = input([]); prior.day.endPlaceId = 'c';
+  const legs = { return: ready('walk', 45) };
+  const changed = structuredClone(prior); changed.day.startTime = 900;
+  assert.equal(reuseReadyStaticLegs(changed, prior, legs).return.min, 45);
+  changed.day.endPlaceId = 'b'; assert.equal(reuseReadyStaticLegs(changed, prior, legs).return.min, null);
+  changed.day.endPlaceId = 'hotel'; assert.equal(reuseReadyStaticLegs(changed, prior, legs).return.min, 0);
+});
 await check('search preserves explicit geography and sanitizes upstream errors', () => {
   assert.equal(service.placeSearchQuery('coffee', 'Kyoto, Japan'), 'coffee in Kyoto, Japan');
   assert.equal(service.placeSearchQuery('coffee in Tokyo', 'Kyoto, Japan'), 'coffee in Tokyo');
@@ -223,5 +288,11 @@ await check('long Google address IDs get deterministic compact keys and retain t
     if (originalWindow === undefined) delete globalThis.window;
     else globalThis.window = originalWindow;
   }
+});
+await check('numeric walking includes only classified transit walking steps and preserves small distances',()=>{
+ assert.equal(service.routeWalkingMeters({distanceMeters:49},'walk'),49);assert.equal(service.routeWalkingMeters({distanceMeters:9000},'drive'),0);
+ assert.equal(service.routeWalkingMeters({distanceMeters:9000},'transit'),undefined);
+ assert.equal(service.routeWalkingMeters({legs:[{steps:[{travelMode:'WALKING',distanceMeters:123},{travelMode:'TRANSIT',distanceMeters:8000},{travelMode:'WALKING',distanceMeters:456}]}]},'transit'),579);
+ for(const steps of [[],[{travelMode:'WALKING',distanceMeters:-1}],[{distanceMeters:100}],[{travelMode:'TRANSIT'}]])assert.equal(service.routeWalkingMeters({legs:[{steps}]},'transit'),undefined);
 });
 console.log(`\n${passed} Google Maps planning tests passed.`);

@@ -5,12 +5,13 @@ export { getOpeningSummary } from './openingHours';
 export type { OpeningSchedule, OpeningSummary } from './openingHours';
 
 export interface SearchBounds { north: number; south: number; east: number; west: number }
-export type DiscoveryCategory = 'all' | 'attractions' | 'temples' | 'museums' | 'restaurants' | 'cafes';
+export type DiscoveryCategory = 'all' | 'attractions' | 'temples' | 'museums' | 'restaurants' | 'cafes' | 'indoor';
 export interface DiscoveryPhoto { key: string; width: number; height: number; authors: { name: string; uri?: string }[] }
 export interface DiscoveryInfo {
   rating?: number;
   ratingCount?: number;
   primaryType?: string;
+  primaryTypeCode?: string;
   businessStatus?: string;
   utcOffsetMinutes?: number;
   fetchedAt: number;
@@ -19,6 +20,11 @@ export interface DiscoveryInfo {
   regularHours?: OpeningSchedule;
 }
 export interface DiscoveryResult { place: Place; info: DiscoveryInfo }
+/** Narrow primary venue types suggest indoor options; a venue's secondary café is not enough. */
+export function indoorDiscoveryResult(result:DiscoveryResult,exposure?:'indoor'|'outdoor'|'mixed'|'unknown'):boolean {
+  if(exposure)return exposure==='indoor';
+  return /^(museum|art_gallery|library|movie_theater)$/.test(result.info.primaryTypeCode??'');
+}
 const CACHE_MS = 5 * 60_000;
 const CACHE_LIMIT = 100;
 interface CacheEntry<T> { at: number; promise: Promise<T> }
@@ -31,7 +37,7 @@ let photoSequence = 0;
 const baseFields = ['id', 'displayName', 'location', 'formattedAddress', 'googleMapsURI', 'types', 'attributions'];
 const cardFields = [...baseFields, 'primaryType', 'primaryTypeDisplayName', 'businessStatus', 'rating', 'userRatingCount', 'photos', 'currentOpeningHours', 'utcOffsetMinutes'];
 const detailFields = [...cardFields, 'regularOpeningHours'];
-const categoryText: Record<DiscoveryCategory, string> = { all: 'tourist attractions', attractions: 'tourist attractions', temples: 'temples', museums: 'museums', restaurants: 'restaurants', cafes: 'cafes' };
+const categoryText: Record<DiscoveryCategory, string> = { all: 'tourist attractions', attractions: 'tourist attractions', temples: 'temples', museums: 'museums', restaurants: 'restaurants', cafes: 'cafes', indoor:'museums and art galleries' };
 const categoryType: Partial<Record<DiscoveryCategory, string>> = { attractions: 'tourist_attraction', museums: 'museum', restaurants: 'restaurant', cafes: 'cafe' };
 const safeURL = (value?: string | null): string | undefined => value && /^https:\/\//i.test(value) ? value : undefined;
 
@@ -123,6 +129,7 @@ async function normalize(value: google.maps.places.Place, details = false): Prom
     rating: Number.isFinite(value.rating) && value.rating! >= 0 && value.rating! <= 5 ? value.rating! : undefined,
     ratingCount: Number.isInteger(value.userRatingCount) && value.userRatingCount! >= 0 ? value.userRatingCount! : undefined,
     primaryType: value.primaryTypeDisplayName?.slice(0, 100),
+    primaryTypeCode: value.primaryType?.slice(0,100),
     businessStatus: value.businessStatus ?? undefined,
     utcOffsetMinutes: Number.isFinite(value.utcOffsetMinutes) ? value.utcOffsetMinutes! : undefined,
     fetchedAt: Date.now(), photos: (value.photos ?? []).slice(0, details ? 6 : 1).map(photoDescriptor),
@@ -140,7 +147,7 @@ export function searchDiscovery(query: string, destination: string, category: Di
       const { Place: GooglePlace } = await maps.importLibrary('places') as google.maps.PlacesLibrary;
       const response = await timeout(GooglePlace.searchByText(request));
       const normalized = await Promise.all(response.places.slice(0, 8).map(place => normalize(place)));
-      return normalized.filter((result): result is DiscoveryResult => result !== null && (!bounds || withinSearchBounds(result.place, bounds)));
+      return normalized.filter((result): result is DiscoveryResult => result !== null && (!bounds || withinSearchBounds(result.place, bounds)) && (category!=='indoor'||indoorDiscoveryResult(result)));
     } catch (error) { throw new Error(mapsErrorMessage(error)); }
   });
 }

@@ -14,7 +14,7 @@ type Props = {
   onCustom?: () => void;
   onChoose?: (place: Place) => void;
   initialQuery?: string;
-  purpose?: 'discover' | 'hotel' | 'locate';
+  purpose?: 'discover' | 'hotel' | 'locate' | 'endpoint';
 };
 
 export function PlaceAttribution({place}: {place: Place}) {
@@ -31,21 +31,21 @@ export default function DiscoveryPanel({destination,onPreview,onSave,onAdd,statu
     const trimmed=text.trim(); if(!trimmed)return;
     const id=++requestId.current;
     setQuery(text);setCategory(filter);setLoading(true);setError('');setSearched(true);
-    try {const found=await searchPlaces(trimmed,destination,filter);if(requestId.current===id)setResults(found);}
+    try {const found=await searchPlaces(trimmed,purpose==='endpoint'?'':destination,filter);if(requestId.current===id)setResults(found);}
     catch {if(requestId.current===id){setResults([]);setError('Places could not load. Check your connection or Google Maps access, then try again.');}}
     finally {if(requestId.current===id)setLoading(false);}
   }
   function submit(e:FormEvent){e.preventDefault();void search();}
-  const title=purpose==='hotel'?'Choose your hotel or base':purpose==='locate'?'Find the exact location':`Discover in ${destination.split(',')[0]}`;
+  const title=purpose==='hotel'?'Choose your hotel or base':purpose==='endpoint'?'Airport, station, or anywhere':purpose==='locate'?'Find the exact location':`Discover in ${destination.split(',')[0]}`;
   return <>
     <div className="discovery-top">
       <div className="section-heading"><h2>{title}</h2>{onClose&&<button className="icon-button tiny" onClick={onClose} aria-label="Close discovery"><X size={16}/></button>}</div>
       <form onSubmit={submit} className="live-search-form">
-        <label className="search-label" htmlFor={`search-${purpose}`}>{purpose==='hotel'?'Hotel name, station, or address':'Search places near this trip'}</label>
-        <div className="search-input"><Search size={17}/><input id={`search-${purpose}`} type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder={purpose==='hotel'?'e.g. Hotel Granvia Kyoto':'Temples, markets, food…'} maxLength={240}/><button type="submit" aria-label="Search Google Maps" disabled={loading||!query.trim()}>{loading?<LoaderCircle size={16} className="spin"/>:<ArrowRight size={17}/>}</button></div>
+        <label className="search-label" htmlFor={`search-${purpose}`}>{purpose==='endpoint'?'Airport, terminal, station, or address':purpose==='hotel'?'Hotel name, station, or address':'Search places near this trip'}</label>
+        <div className="search-input"><Search size={17}/><input id={`search-${purpose}`} type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder={purpose==='endpoint'?'e.g. Dublin Airport Terminal 2':purpose==='hotel'?'e.g. Hotel Granvia Kyoto':'Temples, markets, food…'} maxLength={240}/><button type="submit" aria-label="Search Google Maps" disabled={loading||!query.trim()}>{loading?<LoaderCircle size={16} className="spin"/>:<ArrowRight size={17}/>}</button></div>
       </form>
       {purpose==='discover'&&<div className="filter-chips" role="group" aria-label="Filter by category">{[['all','All'],['attr','Sights'],['food','Food & drink']].map(([value,label])=><button key={value} aria-pressed={category===value} onClick={()=>{setCategory(value);if(query.trim())void search(query,value);}}>{label}</button>)}</div>}
-      {purpose!=='discover'&&<p className="subtle-note">{purpose==='hotel'?'Your stay is the default start and the return point. Set a different departure in Day plan.':'Choose a result to pin this stop and calculate its journeys.'}</p>}
+      {purpose!=='discover'&&<p className="subtle-note">{purpose==='hotel'?'Your stay is the default start and end point. Use the Start and End controls in each day to choose different locations.':purpose==='endpoint'?'Choose the exact terminal or entrance for a useful route. This location applies only to the selected day.':'Choose a result to pin this stop and calculate its journeys.'}</p>}
     </div>
     <div className="discovery-results live-results" aria-busy={loading}>
       {loading&&<div className="search-progress" role="status"><LoaderCircle size={18} className="spin"/>Finding places on Google Maps…</div>}
@@ -59,7 +59,7 @@ export default function DiscoveryPanel({destination,onPreview,onSave,onAdd,statu
         {!!p.attributions?.length&&<div className="provider-attributions"><PlaceAttribution place={p}/></div>}
       </article>)}
       {!loading&&!error&&searched&&!results.length&&<div className="empty-state"><Search size={28}/><h3>No places found</h3><p>Try a more specific name, neighbourhood, or address.</p></div>}
-      {!searched&&<div className="discovery-welcome"><span className="discovery-welcome-icon"><CompassMark/></span><h3>{purpose==='hotel'?'Start somewhere lovely.':'Find your next favourite.'}</h3><p>{purpose==='hotel'?'Search for your stay or another base to complete each day’s return journey.':`Search for a place in ${destination}, or start with a little inspiration.`}</p>{purpose==='discover'&&<div className="discovery-suggestions">{[['Temples and gardens','attr'],['Coffee shops','all'],['Local restaurants','food'],['Museums','attr']].map(([text,filter])=><button className="button small" key={text} onClick={()=>void search(text,filter)}>{text}<ArrowRight size={13}/></button>)}</div>}{initialQuery&&<button className="button primary full" onClick={()=>void search()}>Search for {initialQuery}<Search size={15}/></button>}</div>}
+      {!searched&&<div className="discovery-welcome"><span className="discovery-welcome-icon"><CompassMark/></span><h3>{purpose==='hotel'?'Start somewhere lovely.':purpose==='endpoint'?'Every journey has a beginning and an end.':'Find your next favourite.'}</h3><p>{purpose==='hotel'?'Search for your stay or another base to use as your default start and end point.':purpose==='endpoint'?'Search by name, or find an airport or station near your destination.':`Search for a place in ${destination}, or start with a little inspiration.`}</p>{purpose==='endpoint'&&<div className="discovery-suggestions">{['Airports','Train stations'].map(text=><button className="button small" key={text} onClick={()=>void search(`${text} near ${destination}`,'all')}>{text}<ArrowRight size={13}/></button>)}</div>}{purpose==='discover'&&<div className="discovery-suggestions">{[['Temples and gardens','attr'],['Coffee shops','all'],['Local restaurants','food'],['Museums','attr']].map(([text,filter])=><button className="button small" key={text} onClick={()=>void search(text,filter)}>{text}<ArrowRight size={13}/></button>)}</div>}{initialQuery&&<button className="button primary full" onClick={()=>void search()}>Search for {initialQuery}<Search size={15}/></button>}</div>}
     </div>
     <div className="discovery-footer">{onCustom&&<button className="button dashed full" onClick={onCustom}><MapPin size={16}/>Add a custom location</button>}<span className="google-attribution">Google Maps</span><small className="discovery-legal"><a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a><span>·</span><a href="/terms.html" target="_blank" rel="noreferrer">Terms</a></small></div>
   </>;

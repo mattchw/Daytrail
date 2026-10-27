@@ -6,8 +6,12 @@ const dataURL = source => `data:text/javascript;base64,${Buffer.from(source).toS
 const modelURL = dataURL(compile('./model.ts'));
 const hoursURL = dataURL(compile('./openingHours.ts'));
 const visitURL = dataURL(compile('./visitHours.ts').replace(/from ['"]\.\/openingHours['"]/g, `from ${JSON.stringify(hoursURL)}`));
+const planningURL = dataURL(compile('./hoursPlanning.ts')
+  .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
+  .replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`));
 const engineURL = dataURL(compile('./improveDay.ts')
   .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
+  .replace(/from ['"]\.\/hoursPlanning['"]/g, `from ${JSON.stringify(planningURL)}`)
   .replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`));
 const { eligibility, signature, legsForOrder, evaluateOrder, searchOrders, applyOrder } = await import(engineURL);
 let passed = 0;
@@ -33,6 +37,23 @@ const period = (day, start, end, endDay = day) => ({ open: point(day, start), cl
 const hours = (periods, extra = {}) => ({ currentHours: { periods, weekdayDescriptions: [] }, regularHours: { periods, weekdayDescriptions: [] }, fetchedAt: Date.parse('2026-10-26T03:00:00Z'), utcOffsetMinutes: 540, ...extra });
 const orderedLegs = (items, minutes = 0) => Object.fromEntries([...items.map(item => [item.aid, leg(minutes)]), ['return', leg(minutes)]]);
 
+await check('opening waits count toward later bookings without converting flexible visits into bookings', () => {
+  const input=fixture(['a','b']);input.day.items[0].duration=60;input.day.items[1].fixed=630;
+  input.hours.a=hours([period(1,10,17)]);
+  const evaluation=evaluateOrder(input,input.day.items,orderedLegs(input.day.items));
+  assert.equal(evaluation.schedule.rows[0].start,600);
+  assert.equal(evaluation.schedule.rows[0].it.fixed,null);
+  assert.equal(evaluation.schedule.rows[1].late,30);
+  assert.equal(evaluation.feasible,false);
+});
+await check('a shorter route that misses explicitly confirmed last entry is never suggested', async () => {
+  const input=fixture(['a','b']);
+  input.hours.a=hours([period(1,9,17)],{lastEntryMinutes:{1:560}});
+  const data=edges(matrix(input),[['hotel','a',5],['a','b',90],['b','hotel',5],['hotel','b',5],['b','a',20],['a','hotel',5]]);
+  assert.equal(evaluateOrder(input,input.day.items,legsForOrder(input,input.day.items,data)).checks.a.status,'fits');
+  assert.deepEqual(await searchOrders(input,data),[]);
+});
+
 await check('directed routes choose the real cheaper order without mutating the trip', async () => {
   const { input, data } = simple(), before = JSON.stringify(input);
   const candidates = await searchOrders(input, data);
@@ -50,6 +71,24 @@ await check('a distinct departure is used while the return remains the hotel', a
   assert.deepEqual(candidate.order, ['b', 'a', 'c']);
   assert.equal(candidate.legs.b, data.start.b);
   assert.equal(candidate.legs.return, data.c.hotel);
+});
+await check('the airport endpoint remains fixed and changes which stop order is worthwhile', async () => {
+  const input = fixture(['a', 'b']); input.day.endPlaceId = 'start';
+  const data = edges(matrix(input, 10), [['b', 'start', 30], ['a', 'start', 5], ['a', 'hotel', 100]]);
+  const [candidate] = await searchOrders(input, data);
+  assert.deepEqual(candidate.order, ['b', 'a']);
+  assert.equal(candidate.legs.return, data.a.start);
+  assert.equal(candidate.saving, 25);
+  assert.equal(applyOrder(input.day, candidate.order).endPlaceId, 'start');
+  const baseline = legsForOrder(input, input.day.items, data);
+  assert.equal(baseline.return, data.b.start);
+});
+await check('comparison validates selected endpoints instead of an unused hotel', () => {
+  const input = fixture(); Object.assign(input.day, { startPlaceId: 'start', endPlaceId: 'a' });
+  delete input.places.hotel;
+  assert.equal(eligibility(input).ok, true);
+  input.places.a.lat = undefined;
+  assert.equal(eligibility(input).action, 'locations');
 });
 await check('fixed anchors retain position and time while both flexible segments can improve', async () => {
   const input = fixture(['a', 'b', 'x', 'c', 'd']);
@@ -164,11 +203,47 @@ await check('less travel cannot make the day finish later after a fixed booking'
   assert.equal(candidates.some(item => item.order.join() === 'b,a,x,d,c'), false);
   assert.equal(candidates[0].order.join(), 'b,a,x,c,d');
 });
-await check('a preferred finish is soft and cannot get worse', async () => {
-  const { input, data } = simple(); input.day.finishBy = 560;
+await check('a shorter route that still misses the finish deadline is not proposed', async () => {
+  const { input, data } = simple(); input.day.finishBy = 604;
+  const baseline = evaluateOrder(input, input.day.items, legsForOrder(input, input.day.items, data));
+  const fasterOrder = [input.day.items[1], input.day.items[0], input.day.items[2]];
+  const faster = evaluateOrder(input, fasterOrder, legsForOrder(input, fasterOrder, data));
+  assert.equal(baseline.schedule.finish, 650);
+  assert.equal(baseline.feasible, false);
+  assert.equal(faster.schedule.finish, 605);
+  assert.equal(faster.conflicts, 1);
+  assert.equal(faster.feasible, false);
+  assert.deepEqual(await searchOrders(input, data), []);
+});
+await check('an already late day can be improved to reach its endpoint exactly at the deadline', async () => {
+  const { input, data } = simple(); input.day.finishBy = 605;
+  const baseline = evaluateOrder(input, input.day.items, legsForOrder(input, input.day.items, data));
+  assert.equal(baseline.feasible, false);
   const [candidate] = await searchOrders(input, data);
-  assert.ok(candidate.evaluation.schedule.finish > input.day.finishBy);
-  assert.ok(candidate.evaluation.schedule.finish < evaluateOrder(input, input.day.items, legsForOrder(input, input.day.items, data)).schedule.finish);
+  assert.deepEqual(candidate.order, ['b', 'a', 'c']);
+  assert.equal(candidate.evaluation.schedule.finish, input.day.finishBy);
+  assert.equal(candidate.evaluation.conflicts, 0);
+  assert.equal(candidate.evaluation.feasible, true);
+});
+await check('the final transfer is included when deciding whether the deadline is met', async () => {
+  const { input, data } = simple(); input.day.finishBy = 590;
+  const fasterOrder = [input.day.items[1], input.day.items[0], input.day.items[2]];
+  const evaluation = evaluateOrder(input, fasterOrder, legsForOrder(input, fasterOrder, data));
+  assert.ok(evaluation.schedule.rows.at(-1).physicalEnd < input.day.finishBy);
+  assert.ok(evaluation.schedule.finish > input.day.finishBy);
+  assert.equal(evaluation.feasible, false);
+  assert.deepEqual(await searchOrders(input, data), []);
+});
+await check('an unknown final transfer cannot establish that a day meets its deadline', async () => {
+  const { input, data } = simple(); input.day.finishBy = 620;
+  const fasterOrder = [input.day.items[1], input.day.items[0], input.day.items[2]];
+  const legs = legsForOrder(input, fasterOrder, data); legs.return = leg(null);
+  const evaluation = evaluateOrder(input, fasterOrder, legs);
+  assert.ok(evaluation.schedule.finish < input.day.finishBy);
+  assert.equal(evaluation.schedule.finishApprox, true);
+  assert.equal(evaluation.feasible, false);
+  data.c.hotel = leg(null);
+  await assert.rejects(searchOrders(input, data), /current day is unavailable/);
 });
 await check('a smaller than five minute saving does not produce an Apply candidate', async () => {
   const input = fixture(['a', 'b']);
@@ -202,7 +277,7 @@ await check('the signature covers planning, routing, hours and locks while ignor
   const { input } = simple(); const original = signature(input);
   input.day.items[0].note = 'Updated while reviewing'; input.places.a.name = 'A new label'; input.day.title = 'Edited title';
   assert.equal(signature(input), original);
-  const mutations = [i => { i.day.items.reverse(); }, i => { i.day.items[0].duration++; }, i => { i.day.items[0].fixed = 600; }, i => { i.day.endMode = 'drive'; }, i => { i.day.startTime++; }, i => { i.day.finishBy = 900; }, i => { i.day.startPlaceId = 'start'; }, i => { i.places.hotel.lat++; }, i => { i.places.a.googlePlaceId = 'new'; }, i => { i.date = '2026-10-27'; }, i => { i.timezone = 'UTC'; }, i => { i.hours.a = hours([period(1, 9, 17)]); }, i => { i.locks = ['a']; }];
+  const mutations = [i => { i.day.items.reverse(); }, i => { i.day.items[0].duration++; }, i => { i.day.items[0].fixed = 600; }, i => { i.day.endMode = 'drive'; }, i => { i.day.startTime++; }, i => { i.day.finishBy = 900; }, i => { i.day.startPlaceId = 'start'; }, i => { i.day.endPlaceId = 'start'; }, i => { i.places.hotel.lat++; }, i => { i.places.a.googlePlaceId = 'new'; }, i => { i.date = '2026-10-27'; }, i => { i.timezone = 'UTC'; }, i => { i.hours.a = hours([period(1, 9, 17)]); }, i => { i.locks = ['a']; }];
   for (const mutate of mutations) { const changed = structuredClone(input); mutate(changed); assert.notEqual(signature(changed), original); }
   input.locks = ['a', 'b']; const locksSignature = signature(input); input.locks = ['b', 'a', 'a']; assert.equal(signature(input), locksSignature);
 });

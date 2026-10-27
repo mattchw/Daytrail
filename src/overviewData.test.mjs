@@ -9,8 +9,14 @@ const dataURL = source => `data:text/javascript;base64,${Buffer.from(source).toS
 const modelURL = dataURL(compile('./model.ts'));
 const openingURL = dataURL(compile('./openingHours.ts'));
 const visitURL = dataURL(compile('./visitHours.ts').replace(/from ['"]\.\/openingHours['"]/g, `from ${JSON.stringify(openingURL)}`));
+const planningURL = dataURL(compile('./hoursPlanning.ts')
+  .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
+  .replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`));
+const placeHoursURL = dataURL(compile('./placeHours.ts'));
 const overviewURL = dataURL(compile('./overviewData.ts')
   .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
+  .replace(/from ['"]\.\/hoursPlanning['"]/g, `from ${JSON.stringify(planningURL)}`)
+  .replace(/from ['"]\.\/placeHours['"]/g, `from ${JSON.stringify(placeHoursURL)}`)
   .replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`));
 const { summarizeOverviewDay, createOverviewTaskPool } = await import(overviewURL);
 
@@ -48,6 +54,29 @@ await check('real journeys produce a checked arrival and exact return', () => {
   assert.equal(result.hoursCheckedCount, 1);
   assert.equal(result.hoursUnknownCount, 0);
   assert.equal(result.status, 'ready');
+});
+await check('overview includes opening waits in later arrivals and final arrival', () => {
+  const later=hours({currentHours:{periods:[period(1,10,17)],weekdayDescriptions:[]}});
+  const result=summary(day({items:[item('temple'),item('museum')]}),data({
+    legs:{temple:ready(),museum:ready(),return:ready()},hours:{'google-temple':later,'google-museum':hours()},
+  }));
+  assert.equal(result.sc.rows[0].arrive,550);assert.equal(result.sc.rows[0].start,600);
+  assert.equal(result.sc.rows[0].it.fixed,null);assert.equal(result.sc.rows[1].start,670);
+  assert.equal(result.sc.wait,50);assert.equal(result.sc.finish,740);assert.equal(result.hoursConflictCount,0);
+});
+await check('overview keeps confirmed admission metadata and counts red conflicts separately',()=>{
+  const withCutoff={...places,temple:{...places.temple,lastEntryMinutes:{1:990}}};
+  const red=summarizeOverviewDay(day({startTime:990}),'2026-10-26',withCutoff,data());
+  assert.equal(red.visitChecks.temple.reason,'last-entry');assert.equal(red.hoursConflictCount,1);
+  const amber=summary(day({startTime:980}),data());
+  assert.equal(amber.visitChecks.temple.status,'short');assert.equal(amber.visitIssueCount,1);assert.equal(amber.hoursConflictCount,0);
+  const noProvider=summarizeOverviewDay(day({startTime:990}),'2026-10-26',withCutoff,data({hours:{}}));
+  assert.equal(noProvider.visitChecks.temple.reason,'last-entry');
+});
+await check('overview does not silently move a fixed reservation to opening time',()=>{
+ const later=hours({currentHours:{periods:[period(1,10,17)],weekdayDescriptions:[]}});
+ const result=summary(day({items:[item('temple',{fixed:570})]}),data({hours:{'google-temple':later}}));
+ assert.equal(result.sc.rows[0].start,570);assert.equal(result.visitChecks.temple.status,'closed');assert.equal(result.hoursConflictCount,1);
 });
 await check('a late booking checks the full feasible visit, never the booked end', () => {
   const result = summary(day({ startTime: 16 * 60 + 20, items: [item('temple', { fixed: 16 * 60 })] }));
@@ -96,6 +125,21 @@ await check('empty added days need no travel or opening-hours checks', () => {
   assert.equal(result.hoursUnknownCount, 0);
   assert.equal(result.status, 'ready');
 });
+await check('an airport transfer day contributes travel and finish time without a visit or opening-hours check', () => {
+  const plan = day({ items: [], endPlaceId: 'museum', startTime: 600 });
+  const result = summary(plan, data({ legs: { return: ready(55) }, hours: {} }));
+  assert.equal(result.sc.travel, 55);
+  assert.equal(result.sc.finish, 655);
+  assert.equal(result.sc.rows.length, 0);
+  assert.equal(result.hoursCheckedCount, 0);
+  assert.equal(result.status, 'ready');
+});
+await check('a missing transfer route keeps an otherwise empty day incomplete', () => {
+  const result = summary(day({ items: [], startPlaceId: 'museum' }), data({ legs: {}, hours: {} }));
+  assert.equal(result.sc.unknown, 1);
+  assert.equal(result.sc.finishApprox, true);
+  assert.equal(result.status, 'incomplete');
+});
 await check('loading stays visible while routes or opening hours are pending', () => {
   assert.equal(summary(day(), data({ routeLoading: true })).status, 'loading');
   assert.equal(summary(day(), data({ hoursLoading: true })).status, 'loading');
@@ -132,4 +176,9 @@ await check('failed checks release their worker so later days still run', async 
   assert.equal(secondRan, true);
 });
 
+await check('a flight check-in anchor is not classified as a sightseeing opening-hours visit', () => {
+  const airportDay = day({items:[item('temple',{departureForFlightId:'flight1',duration:120})]});
+  const result = summarizeOverviewDay(airportDay,'2026-11-01',places,{legs:{temple:ready(),return:ready()},routeLoading:false,hoursLoading:false,hours:{'google-temple':{businessStatus:'CLOSED_TEMPORARILY',fetchedAt:Date.now()}},error:null});
+  assert.equal(result.visitIssueCount,0);assert.equal(result.hoursUnknownCount,0);assert.deepEqual(result.visitChecks,{});
+});
 console.log(`\n${passed} whole-trip overview checks passed.`);

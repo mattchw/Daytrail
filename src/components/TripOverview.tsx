@@ -3,10 +3,14 @@ import {useDraggable, useDroppable} from '@dnd-kit/core';
 import {SortableContext, useSortable, verticalListSortingStrategy} from '@dnd-kit/sortable';
 import {CSS} from '@dnd-kit/utilities';
 import {ArrowRight, ArrowRightLeft, Bookmark, CalendarDays, Clock3, Compass, GripVertical, LockKeyhole, MapPin, Plus, RefreshCw, Route, TriangleAlert} from 'lucide-react';
-import {CATEGORIES, MAX_TRIP_DAYS, dayStartTime, formatDuration, formatTime, type Activity, type Day, type Place, type Trip} from '../model';
+import {CATEGORIES, MAX_TRIP_DAYS, dayEndPlace, dayStartPlace, dayStartTime, formatDuration, formatTime, hasEndJourney, type Activity, type Day, type Place, type Trip} from '../model';
 import type {DayOverviewSummary} from '../useTripOverview';
 import {tripDayDate} from '../useLiveRoutes';
 import './overview.css';
+import PlaceHours from './PlaceHours';
+import {visitDateForHours} from '../hoursPlanning';
+import BookingEssentials from './BookingEssentials';
+import {flightsForDay,staysForDay} from '../bookings/model';
 
 export type TripOverviewProps = {
   trip: Trip;
@@ -15,7 +19,10 @@ export type TripOverviewProps = {
   loading: boolean;
   placesError?: string | null;
   readOnly: boolean;
+  showPrivate?: boolean;
   onOpenDay: (dayIndex: number) => void;
+  onBookings?:()=>void;
+  onTravelDay?: (dayIndex: number) => void;
   onMove: (aid: string, dayIndex: number) => void;
   onAddIdea: (place: Place) => void;
   onAddDays: () => void;
@@ -28,7 +35,7 @@ function PlaceCredits({place}: {place: Place}) {
   return <span className="overview-place-credits">{place.attributions.map((credit, index) => <span key={index}>{credit.providerURI ? <a href={credit.providerURI} target="_blank" rel="noreferrer">{credit.provider}</a> : credit.provider}</span>)}</span>;
 }
 
-function OverviewStop({activity, place, readOnly, onMove, warning}: {activity: Activity; place: Place; readOnly: boolean; onMove: () => void; warning?: string}) {
+function OverviewStop({activity, place, readOnly, onMove, warning, date}: {date:string;activity: Activity; place: Place; readOnly: boolean; onMove: () => void; warning?: string}) {
   const {attributes, listeners, setNodeRef, transform, transition, isDragging} = useSortable({
     id: 'act:' + activity.aid,
     data: {type: 'activity', aid: activity.aid},
@@ -39,7 +46,8 @@ function OverviewStop({activity, place, readOnly, onMove, warning}: {activity: A
     {!readOnly && <button type="button" className="overview-drag" {...attributes} {...listeners} aria-label={`Drag ${place.name} to another day or position`} title="Drag to another day or position"><GripVertical size={15}/></button>}
     <div className="overview-stop-content">
       <strong><i style={{background: category.ink}}/>{place.name}</strong>
-      <span className="overview-stop-meta"><span>{formatDuration(activity.duration)}</span>{activity.fixed !== null && <span className="overview-booking"><LockKeyhole size={10}/>{formatTime(activity.fixed)}</span>}</span>
+      <span className="overview-stop-meta"><span>{activity.departureForFlightId?'Airport buffer':activity.mode==='flight'&&activity.duration===0?'Arrival airport':formatDuration(activity.duration)}</span>{activity.fixed !== null && <span className="overview-booking"><LockKeyhole size={10}/>{formatTime(activity.fixed)}</span>}</span>
+      {activity.mode!=='flight'&&!activity.departureForFlightId&&<PlaceHours place={place} date={date}/>}
       {warning && <span className="overview-stop-warning"><TriangleAlert size={11}/>{warning}</span>}
       <PlaceCredits place={place}/>
     </div>
@@ -60,12 +68,16 @@ function OverviewIdea({place, readOnly, onAdd}: {place: Place; readOnly: boolean
   </li>;
 }
 
-function OverviewDay({day, index, date, places, summary, loading, readOnly, onOpen, onMove, onDiscover}: {
-  day: Day; index: number; date: string; places: Record<string, Place>; summary?: DayOverviewSummary; loading: boolean; readOnly: boolean;
+function OverviewDay({day, index, date, places, summary, loading, readOnly, onOpen, onMove, onDiscover, onTravel,trip}: {
+  trip:Trip;day: Day; index: number; date: string; places: Record<string, Place>; summary?: DayOverviewSummary; loading: boolean; readOnly: boolean;
   onOpen: () => void; onMove: (aid: string) => void; onDiscover: () => void;
+  onTravel?: () => void;
 }) {
   const {setNodeRef, isOver} = useDroppable({id: 'day:' + index, data: {type: 'day', dayIdx: index}, disabled: readOnly});
   const hasStops = day.items.length > 0;
+  const hasJourney = hasEndJourney(day);
+  const startPlace = dayStartPlace(day, places);
+  const endPlace = dayEndPlace(day, places);
   const visits = day.items.reduce((total, activity) => total + activity.duration, 0);
   const sc = summary?.sc;
   const bookingIssues = sc?.rows.filter(row => row.late > 0).length ?? 0;
@@ -73,14 +85,20 @@ function OverviewDay({day, index, date, places, summary, loading, readOnly, onOp
   const isCheckingRoutes = summary?.routeLoading || (!summary && loading);
   const hoursWarnings = summary?.visitIssueCount ?? 0;
   const dateLabel = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC'});
-  return <article ref={setNodeRef} className={`overview-day ${isOver ? 'is-drop-over' : ''} ${!hasStops ? 'is-empty' : ''}`} aria-labelledby={`overview-day-${day.id}`}>
+  return <article ref={setNodeRef} className={`overview-day ${isOver ? 'is-drop-over' : ''} ${!hasJourney ? 'is-empty' : ''}`} aria-labelledby={`overview-day-${day.id}`}>
     <header className="overview-day-header">
       <div className="overview-day-date"><span>{day.label}</span><time dateTime={date}>{dateLabel}</time></div>
       <h3 id={`overview-day-${day.id}`}>{day.title}</h3>
-      <p className="overview-day-count">{day.items.length} {day.items.length === 1 ? 'stop' : 'stops'}{hasStops && <><span>·</span>{formatDuration(visits)} of visits</>}</p>
+      <p className="overview-day-count">{hasJourney && !hasStops ? 'Direct transfer' : `${day.items.length} ${day.items.length === 1 ? 'stop' : 'stops'}`}{hasStops && <><span>·</span>{formatDuration(visits)} of visits</>}</p>
     </header>
-    {hasStops && <div className="overview-timing">
-      <div><Clock3 size={14}/><span>Start {formatTime(dayStartTime(day))}<b>·</b>{isCheckingRoutes ? 'Checking timing…' : sc && !sc.finishApprox ? `Back ${formatTime(sc.finish)}` : 'Timing incomplete'}</span></div>
+    {onTravel && <button type="button" className="overview-travel-day" onClick={onTravel} aria-label={`Today view for ${day.label}`}><Compass size={15}/>Today view<ArrowRight size={14}/></button>}
+    {(flightsForDay(trip,index).length>0||staysForDay(trip,index).length>0)&&<div className="overview-booking-chips">{flightsForDay(trip,index).map(({flight,departure,arrival,continuation})=><span key={flight.id}>✈ {flight.flightNumber||'Flight'} · {continuation?'Continue after arrival':departure?`Departs ${flight.departure.time||'time to confirm'}`:`Arrives ${flight.arrival.time||'time to confirm'}`}{departure&&arrival?' · arrives '+(flight.arrival.time||'time to confirm'):''}</span>)}{staysForDay(trip,index).map(({stay,checkIn,checkOut})=><span key={stay.id}>⌂ {checkOut?'Check-out':checkIn?'Check-in':'Stay'} · {places[stay.placeId]?.userLabel||places[stay.placeId]?.name}</span>)}</div>}
+    <div className="overview-endpoints">
+      <div><span className="overview-endpoint-marker">S</span><span><small>Start from</small><strong>{startPlace.name}</strong></span></div>
+      <div><span className="overview-endpoint-marker is-end">E</span><span><small>End at</small><strong>{endPlace.name}</strong></span></div>
+    </div>
+    {hasJourney && <div className="overview-timing">
+      <div><Clock3 size={14}/><span>Start {formatTime(dayStartTime(day))}<b>·</b>{isCheckingRoutes ? 'Checking timing…' : sc && !sc.finishApprox ? `Arrive ${formatTime(sc.finish)}` : 'Timing incomplete'}</span></div>
       <div><Route size={14}/><span>{sc && (!sc.unknown || sc.travel > 0) ? `${sc.unknown ? 'At least ' : ''}${formatDuration(sc.travel)} travel` : isCheckingRoutes ? 'Checking journeys…' : 'Travel time unavailable'}{day.finishBy != null && <><b>·</b>Goal {formatTime(day.finishBy)}</>}</span></div>
     </div>}
     {(bookingIssues > 0 || hoursWarnings > 0 || finishOver > 0) && <div className="overview-day-alerts">
@@ -94,25 +112,26 @@ function OverviewDay({day, index, date, places, summary, loading, readOnly, onOp
           if (!place) return null;
           const check = summary?.visitChecks?.[activity.aid];
           const warning = check?.status === 'closed' || check?.status === 'short' ? check.label : undefined;
-          return <OverviewStop key={activity.aid} activity={activity} place={place} readOnly={readOnly} onMove={() => onMove(activity.aid)} warning={warning}/>;
+          const row = sc?.rows.find(row => row.it.aid === activity.aid);
+          return <OverviewStop key={activity.aid} date={row?visitDateForHours(row,date):date} activity={activity} place={place} readOnly={readOnly} onMove={() => onMove(activity.aid)} warning={warning}/>;
         })}</ol>
       </SortableContext>
       <div className="overview-day-footer">
         <span className="overview-hours-note">{summary?.hoursLoading ? 'Checking opening hours…' : summary ? `Hours checked for ${summary.hoursCheckedCount} of ${day.items.length} stops${summary.hoursRegularCount > 0 ? ' · regular hours' : ''}` : 'Opening hours not checked'}</span>
         <button type="button" className="overview-open-day" onClick={onOpen} aria-label={`Open ${day.label}`}><span>Open day</span><ArrowRight size={15}/></button>
       </div>
-    </> : <div className="overview-empty-day">
-      <span className="overview-empty-icon"><Compass size={25} strokeWidth={1.5}/></span>
-      <h4>Leave room for discovery</h4>
-      <p>{readOnly ? 'No places planned for this day yet.' : 'Drop a saved idea here, or find somewhere new.'}</p>
-      {day.finishBy != null && <span className="overview-empty-goal">Start {formatTime(dayStartTime(day))} · Finish goal {formatTime(day.finishBy)}</span>}
-      {!readOnly && <button type="button" className="button" onClick={onDiscover} aria-label={`Discover places for ${day.label}`}><Plus size={15}/>Discover places</button>}
+    </> : <div className={`overview-empty-day${hasJourney ? ' is-transfer' : ''}`}>
+      <span className="overview-empty-icon">{hasJourney ? <Route size={25} strokeWidth={1.5}/> : <Compass size={25} strokeWidth={1.5}/>}</span>
+      <h4>{hasJourney ? 'A day for the journey' : 'Leave room for discovery'}</h4>
+      <p>{hasJourney ? 'Your direct transfer is included in the day’s route and timing.' : readOnly ? 'No places planned for this day yet.' : 'Drop a saved idea here, or find somewhere new.'}</p>
+      {!hasJourney && day.finishBy != null && <span className="overview-empty-goal">Start {formatTime(dayStartTime(day))} · Finish goal {formatTime(day.finishBy)}</span>}
+      {!readOnly && <button type="button" className="button" onClick={onDiscover} aria-label={`Discover places for ${day.label}`}><Plus size={15}/>{hasJourney ? 'Add a stop' : 'Discover places'}</button>}
     </div>}
     {!hasStops && <div className="overview-day-footer"><button type="button" className="overview-open-day" onClick={onOpen} aria-label={`Open ${day.label}`}><span>Open day</span><ArrowRight size={15}/></button></div>}
   </article>;
 }
 
-export default function TripOverview({trip, places, summaries, loading, placesError, readOnly, onOpenDay, onMove, onAddIdea, onAddDays, onDiscover, onRetry}: TripOverviewProps) {
+export default function TripOverview({trip, places, summaries, loading, placesError, readOnly, showPrivate = !readOnly, onOpenDay, onTravelDay, onBookings, onMove, onAddIdea, onAddDays, onDiscover, onRetry}: TripOverviewProps) {
   const ideasPanel = useRef<HTMLElement>(null);
   const ideasHeading = useRef<HTMLHeadingElement>(null);
   const stopCount = trip.days.reduce((total, day) => total + day.items.length, 0);
@@ -138,7 +157,7 @@ export default function TripOverview({trip, places, summaries, loading, placesEr
       </div>
       {(failed || placesError) && <div className="overview-load-notice"><span><TriangleAlert size={15}/>{placesError || (needsJourneyEstimates ? 'Some journeys need an estimate. Open a day to check locations and transport.' : 'Some trip details couldn’t be checked. Your places are still here.')}</span><button type="button" onClick={onRetry}><RefreshCw size={13}/>Retry checks</button></div>}
       <div className="overview-layout">
-        <div className="overview-day-grid">{trip.days.map((day, index) => <OverviewDay key={day.id} day={day} index={index} date={tripDayDate(trip.startDate, index)} places={places} summary={summaries[day.id]} loading={loading} readOnly={readOnly} onOpen={() => onOpenDay(index)} onMove={aid => onMove(aid, index)} onDiscover={() => onDiscover(index)}/>)}
+        <div className="overview-day-grid">{trip.days.map((day, index) => <OverviewDay trip={trip} key={day.id} day={day} index={index} date={tripDayDate(trip.startDate, index)} places={places} summary={summaries[day.id]} loading={loading} readOnly={readOnly} onOpen={() => onOpenDay(index)} onTravel={onTravelDay?()=>onTravelDay(index):undefined} onMove={aid => onMove(aid, index)} onDiscover={() => onDiscover(index)}/>)}
           {!readOnly && canExtend && <button type="button" className="overview-extend" onClick={onAddDays}><span><Plus size={23}/></span><strong>More time to explore?</strong><small>Add days to your trip</small></button>}
         </div>
         <aside ref={ideasPanel} className="overview-ideas" aria-labelledby="overview-ideas-title">
@@ -148,6 +167,7 @@ export default function TripOverview({trip, places, summaries, loading, placesEr
           {ideas.length > 0 && !readOnly && <p className="overview-ideas-footnote">No rush. Unscheduled ideas stay saved here.</p>}
         </aside>
       </div>
+      <BookingEssentials trip={trip} places={places} showPrivate={showPrivate} compact onManage={onBookings}/>
       <footer className="overview-footnote"><span>Travel estimates can change. Open a day for its full timeline and map.</span>{hasGoogleData && <span className="overview-google-credit">Place and route data from <b>Google Maps</b></span>}</footer>
     </div>
   </section>;

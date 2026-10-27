@@ -1,0 +1,218 @@
+{
+  "migrations": [
+    {
+      "version": "202610260001",
+      "file": "202610260001_daytrail_cloud.sql",
+      "sha256": "cda8b470017f412b50d1238ba9acca28f686a3e2d1d9aa5d64eaab08560fa2d0"
+    }
+  ],
+  "catalog": {
+    "tables": [
+      {
+        "name": "daytrail_trips",
+        "grants": [
+          {
+            "role": "authenticated",
+            "grantable": false,
+            "privilege": "SELECT"
+          }
+        ],
+        "columns": [
+          {
+            "name": "owner_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "name": "trip_id",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "name": "schema_version",
+            "type": "integer",
+            "default": "1",
+            "notNull": true
+          },
+          {
+            "name": "document",
+            "type": "jsonb",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "name": "revision",
+            "type": "bigint",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "name": "deleted_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "name": "last_mutation_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "name": "last_mutation_hash",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          }
+        ],
+        "policies": [
+          {
+            "name": "daytrail_owner_read",
+            "check": null,
+            "roles": [
+              "authenticated"
+            ],
+            "using": "(( SELECT auth.uid() AS uid) = owner_id)",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "constraints": [
+          {
+            "name": "daytrail_document_valid",
+            "validated": true,
+            "definition": "CHECK (daytrail_private.valid_document(document, trip_id))"
+          },
+          {
+            "name": "daytrail_trips_owner_id_fkey",
+            "validated": true,
+            "definition": "FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+          },
+          {
+            "name": "daytrail_trips_pkey",
+            "validated": true,
+            "definition": "PRIMARY KEY (owner_id, trip_id)"
+          },
+          {
+            "name": "daytrail_trips_revision_check",
+            "validated": true,
+            "definition": "CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))"
+          },
+          {
+            "name": "daytrail_trips_schema_version_check",
+            "validated": true,
+            "definition": "CHECK ((schema_version = 1))"
+          }
+        ],
+        "rowSecurity": true,
+        "forceRowSecurity": false
+      }
+    ],
+    "functions": [
+      {
+        "name": "valid_document",
+        "config": [
+          "search_path=\"\""
+        ],
+        "grants": [],
+        "schema": "daytrail_private",
+        "returns": "boolean",
+        "language": "plpgsql",
+        "arguments": "v jsonb, expected_id text",
+        "sourceHash": "8a1dc1af57dec13d28794a72966ba5e2dd0acd26cecdab3ae44f1ac92b41c315",
+        "volatility": "s",
+        "securityDefiner": false
+      },
+      {
+        "name": "valid_id",
+        "config": [
+          "search_path=\"\""
+        ],
+        "grants": [],
+        "schema": "daytrail_private",
+        "returns": "boolean",
+        "language": "sql",
+        "arguments": "v text",
+        "sourceHash": "e8c165e2f77d2b72cac8376ecf7659052dee38915d46d5b20ba1541babd99510",
+        "volatility": "i",
+        "securityDefiner": false
+      },
+      {
+        "name": "valid_keys",
+        "config": [
+          "search_path=\"\""
+        ],
+        "grants": [],
+        "schema": "daytrail_private",
+        "returns": "boolean",
+        "language": "plpgsql",
+        "arguments": "v jsonb, required text[], allowed text[]",
+        "sourceHash": "09cafbab236b4b224581fc9f22f064683403fe0abbaea53a20e4e71e80ea04f4",
+        "volatility": "i",
+        "securityDefiner": false
+      },
+      {
+        "name": "valid_number",
+        "config": [
+          "search_path=\"\""
+        ],
+        "grants": [],
+        "schema": "daytrail_private",
+        "returns": "boolean",
+        "language": "plpgsql",
+        "arguments": "v jsonb, minimum numeric, maximum numeric, whole boolean",
+        "sourceHash": "55742a48f511d6e6a7e56cdf6bba066943da8c0af99970eb96ad4fe230eda68f",
+        "volatility": "i",
+        "securityDefiner": false
+      },
+      {
+        "name": "valid_text",
+        "config": [
+          "search_path=\"\""
+        ],
+        "grants": [],
+        "schema": "daytrail_private",
+        "returns": "boolean",
+        "language": "sql",
+        "arguments": "v jsonb, maximum integer, nonempty boolean",
+        "sourceHash": "bffbb05c6922a158483321c7cbfd8e6461be88d6862d5413f277aea1b8ff6952",
+        "volatility": "i",
+        "securityDefiner": false
+      },
+      {
+        "name": "daytrail_mutate_trip",
+        "config": [
+          "search_path=\"\""
+        ],
+        "grants": [
+          {
+            "role": "authenticated",
+            "grantable": false,
+            "privilege": "EXECUTE"
+          }
+        ],
+        "schema": "public",
+        "returns": "jsonb",
+        "language": "plpgsql",
+        "arguments": "p_expected_owner_id uuid, p_trip_id text, p_expected_revision bigint, p_mutation_id uuid, p_operation text, p_document jsonb, p_schema_version integer",
+        "sourceHash": "08bc01da76a84bc5c4c50ad45213064ac5e650180892465c28102a221d1b95e3",
+        "volatility": "v",
+        "securityDefiner": true
+      }
+    ]
+  }
+}

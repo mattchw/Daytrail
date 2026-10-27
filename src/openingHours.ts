@@ -8,6 +8,8 @@ export interface OpeningInfo {
   businessStatus?: string;
   utcOffsetMinutes?: number;
   fetchedAt: number;
+  /** Explicitly confirmed admission cutoffs, in place-local minutes by weekday. Google hours do not imply a last-entry time. */
+  lastEntryMinutes?: Partial<Record<number, number>>;
 }
 export interface OpeningSummary {
   status: 'open' | 'closed' | 'unknown';
@@ -94,7 +96,7 @@ export function getOpeningSummary(info: OpeningInfo, options: { date?: string; n
   const requestedDate = options.date ?? today;
   const target = parseDate(requestedDate);
   const dayLabel = target ? weekdays[target.getUTCDay()] : 'Local time';
-  const base: OpeningSummary = { status: 'unknown', label: 'Hours unavailable', detail: 'Check opening hours on Google Maps before visiting.', source: 'unavailable', dayLabel, hours: [] };
+  const base: OpeningSummary = { status: 'unknown', label: 'Hours unknown', detail: 'Check opening hours on Google Maps before visiting.', source: 'unavailable', dayLabel, hours: [] };
   if (info.businessStatus === 'CLOSED_PERMANENTLY') return { ...base, status: 'closed', label: 'Permanently closed', detail: 'Google lists this place as permanently closed.' };
   if (info.businessStatus === 'CLOSED_TEMPORARILY') return { ...base, status: 'closed', label: 'Temporarily closed', detail: 'Google lists this place as temporarily closed. Check before planning a visit.' };
   if (!target) return { ...base, label: info.currentHours || info.regularHours ? 'Opening hours available' : base.label, detail: knownOffset ? base.detail : 'Local opening status is unavailable. See the weekly schedule below.' };
@@ -122,4 +124,16 @@ export function getOpeningSummary(info: OpeningInfo, options: { date?: string; n
     label: `${useCurrent ? '' : 'Regular '}${dayLabel} hours`,
     detail: useCurrent ? currentNote : regularNote, source, dayLabel, hours: hours ?? [],
   };
+}
+
+/** A short, date-specific line for cards, discovery results, and place previews. */
+export function getWeekdayHoursLabel(info: OpeningInfo | undefined, date: string): string {
+  if (!info) return 'Hours unknown';
+  const summary = getOpeningSummary(info, { date });
+  if (info.businessStatus === 'CLOSED_PERMANENTLY' || info.businessStatus === 'CLOSED_TEMPORARILY') return summary.label;
+  const value = summary.hours.length ? summary.hours.join(' · ').replace('Open 24 hours', 'Open 24 h') : 'Hours unknown';
+  const target = parseDate(date);
+  const lastEntry = target ? info.lastEntryMinutes?.[target.getUTCDay()] : undefined;
+  return value + (Number.isInteger(lastEntry) && lastEntry! >= 0 && lastEntry! < DAY && value !== 'Closed'
+    ? ` · last entry ${clock(lastEntry!)}` : '');
 }

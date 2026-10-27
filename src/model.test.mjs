@@ -8,7 +8,7 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
 }).outputText;
 const model = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
-const { PLACES, MAX_TRIP_DAYS, seedTrip, createTrip, appendTripDays, getPlaces, dayStartTime, dayStartPlace, formatTime, schedule, travel, proposeOrder, isTrip, persistableTrip } = model;
+const { PLACES, MAX_TRIP_DAYS, seedTrip, createTrip, appendTripDays, getPlaces, dayStartTime, dayStartPlace, dayEndPlace, hasEndJourney, formatTime, schedule, travel, proposeOrder, isTrip, persistableTrip } = model;
 let assertions = 0;
 function check(name, fn) { fn(); assertions += 1; console.log(`✓ ${name}`); }
 const activity = (aid, placeId, overrides = {}) => ({ aid, placeId, duration: 60, fixed: null, mode: 'walk', note: '', ...overrides });
@@ -41,6 +41,7 @@ check('adding days 4 and 5 preserves every existing plan and uses empty-day defa
     assert.equal(added.title, 'A day to discover');
     assert.equal(dayStartTime(added), 540);
     assert.equal(dayStartPlace(added, getPlaces(extended)).id, 'hotel');
+    assert.equal(dayEndPlace(added, getPlaces(extended)).id, 'hotel');
     assert.equal(added.endMode, 'walk');
     assert.equal(added.finishBy, null);
     assert.deepEqual(added.items, []);
@@ -114,38 +115,91 @@ check('extended trips survive persisted and share-style JSON restoration with pl
   assert.deepEqual(appendTripDays(restored, 1).days.at(-1).label, 'Day 6');
 });
 
-check('legacy day setup restores with a 09:00 hotel departure without changing stored plans', () => {
+check('legacy day setup restores with a 09:00 hotel departure and hotel end without changing stored plans', () => {
   const trip = seedTrip();
   const restored = JSON.parse(JSON.stringify(persistableTrip(trip)));
   assert.equal(isTrip(restored), true);
   assert.equal(dayStartTime(restored.days[0]), 540);
   assert.equal(dayStartPlace(restored.days[0], getPlaces(restored)).id, 'hotel');
+  assert.equal(dayEndPlace(restored.days[0], getPlaces(restored)).id, 'hotel');
   assert.equal(Object.hasOwn(restored.days[0], 'startTime'), false);
   assert.equal(Object.hasOwn(restored.days[0], 'finishBy'), false);
   assert.equal(Object.hasOwn(restored.days[0], 'startPlaceId'), false);
+  assert.equal(Object.hasOwn(restored.days[0], 'endPlaceId'), false);
 });
 
-check('day timing and alternate departure survive storage without provider content', () => {
+check('arrival and departure endpoints survive storage without provider content', () => {
   const trip = seedTrip();
   trip.customPlaces.airport = { ...PLACES.hotel, id: 'airport', name: 'Provider airport', googlePlaceId: 'ChIJAirport', lat: 35, lng: 135 };
   Object.assign(trip.days[0], { startTime: 780, finishBy: 1260, startPlaceId: 'airport' });
+  Object.assign(trip.days[2], { endPlaceId: 'airport', endMode: 'drive', finishBy: 1200 });
   const restored = JSON.parse(JSON.stringify(persistableTrip(trip)));
   assert.equal(isTrip(restored), true);
   assert.equal(dayStartTime(restored.days[0]), 780);
   assert.equal(dayStartPlace(restored.days[0], getPlaces(restored)).id, 'airport');
+  assert.equal(dayEndPlace(restored.days[2], getPlaces(restored)).id, 'airport');
+  assert.equal(restored.days[2].endMode, 'drive');
   assert.equal(restored.days[0].finishBy, 1260);
   assert.equal(restored.customPlaces.airport.lat, undefined);
   assert.equal(restored.customPlaces.airport.googlePlaceId, 'ChIJAirport');
   assert.doesNotMatch(JSON.stringify(restored), /Provider airport/);
 });
 
-check('departure uses the selected location and time while return stays at the hotel', () => {
+check('departure uses the selected location and time while an unspecified end stays at the hotel', () => {
   const plan = day([activity('one', 'kiyomizu')], { startTime: 720, startPlaceId: 'fushimi' });
   const result = schedule(plan, PLACES);
   assert.equal(result.rows[0].arrive, 720 + travel(PLACES.fushimi, PLACES.kiyomizu, 'walk').min);
   assert.deepEqual(result.endLeg, travel(PLACES.kiyomizu, PLACES.hotel, 'walk'));
-  assert.equal(schedule({ ...plan, items: [] }, PLACES).finish, 720);
+  assert.equal(schedule({ ...plan, items: [] }, PLACES).finish, 720 + travel(PLACES.fushimi, PLACES.hotel, 'walk').min);
   assert.throws(() => dayStartPlace({ ...plan, startPlaceId: 'missing' }, PLACES), /starting point/);
+});
+
+check('arrival and departure days route to their selected endpoints without adding airport activities', () => {
+  const airport = { ...PLACES.hotel, id: 'airport', name: 'Airport', x: 5, y: 95 };
+  const places = { ...PLACES, airport };
+  const arrival = day([activity('visit', 'kiyomizu')], { startTime: 780, startPlaceId: 'airport' });
+  const arrivalSchedule = schedule(arrival, places);
+  assert.equal(arrivalSchedule.rows[0].arrive, 780 + travel(airport, PLACES.kiyomizu, 'walk').min);
+  assert.deepEqual(arrivalSchedule.endLeg, travel(PLACES.kiyomizu, PLACES.hotel, 'walk'));
+  const departure = day([activity('visit', 'kiyomizu')], { endPlaceId: 'airport', endMode: 'drive' });
+  const departureSchedule = schedule(departure, places);
+  assert.deepEqual(departureSchedule.endLeg, travel(PLACES.kiyomizu, airport, 'drive'));
+  assert.equal(departureSchedule.finish, departureSchedule.rows[0].physicalEnd + departureSchedule.endLeg.min);
+  assert.equal(hasEndJourney(arrival), true);
+  assert.equal(hasEndJourney(departure), true);
+  assert.throws(() => dayEndPlace({ ...departure, endPlaceId: 'missing' }, places), /end point/);
+});
+
+check('empty transfer days use the return leg key and retain known or unknown journey time', () => {
+  const airport = { ...PLACES.hotel, id: 'airport', x: 5, y: 95 };
+  const places = { ...PLACES, airport };
+  for (const endpoints of [{ startPlaceId: 'airport' }, { endPlaceId: 'airport' }]) {
+    const plan = day([], { ...endpoints, startTime: 720, endMode: 'drive' });
+    assert.equal(hasEndJourney(plan), true);
+    const returnLeg = { min: 75, km: '50.0', mode: 'drive', status: 'ready' };
+    const ready = schedule(plan, places, { return: returnLeg });
+    assert.deepEqual(ready.rows, []);
+    assert.equal(ready.endLeg, returnLeg);
+    assert.equal(ready.travel, 75);
+    assert.equal(ready.finish, 795);
+    assert.equal(ready.unknown, 0);
+    const loading = schedule(plan, places, {});
+    assert.equal(loading.endLeg.min, null);
+    assert.equal(loading.unknown, 1);
+    assert.equal(loading.finishApprox, true);
+    const unavailable = schedule(plan, places, { return: { ...returnLeg, status: 'unavailable' } });
+    assert.equal(unavailable.endLeg.min, null);
+    assert.equal(unavailable.travel, 0);
+    assert.equal(unavailable.finishApprox, true);
+  }
+  for (const endpoints of [{}, { startPlaceId: 'hotel', endPlaceId: 'hotel' }, { startPlaceId: 'airport', endPlaceId: 'airport' }]) {
+    const plan = day([], endpoints);
+    assert.equal(hasEndJourney(plan), false);
+    const result = schedule(plan, places, {});
+    assert.equal(result.travel, 0);
+    assert.equal(result.unknown, 0);
+    assert.equal(result.finish, 540);
+  }
 });
 
 check('preferred finish is a soft goal and never truncates visits, bookings or return travel', () => {
@@ -156,18 +210,19 @@ check('preferred finish is a soft goal and never truncates visits, bookings or r
   assert.ok(withGoal.finish > 700);
 });
 
-check('restoration validates departure times, finish goals and starting-place references', () => {
+check('restoration validates departure times, finish goals and both endpoint references', () => {
   const invalid = [
     { startTime: null }, { startTime: -1 }, { startTime: 1440 }, { startTime: 600.5 }, { startTime: '09:00' },
     { finishBy: 540 }, { finishBy: 539 }, { finishBy: 1440 }, { finishBy: '17:00' },
     { startTime: 720, finishBy: 720 }, { startTime: 720, finishBy: 700 },
     { startPlaceId: 'missing' }, { startPlaceId: null }, { startPlaceId: 'constructor' }, { startPlaceId: '' },
+    { endPlaceId: 'missing' }, { endPlaceId: null }, { endPlaceId: 'constructor' }, { endPlaceId: '' }, { endPlaceId: 123 },
   ];
   for (const settings of invalid) {
     const trip = seedTrip(); Object.assign(trip.days[0], settings);
     assert.equal(isTrip(trip), false, JSON.stringify(settings));
   }
-  for (const settings of [{ startTime: 0, finishBy: 1 }, { startTime: 1439, finishBy: null }, { startPlaceId: 'hotel' }, { startPlaceId: 'fushimi', finishBy: 1439 }]) {
+  for (const settings of [{ startTime: 0, finishBy: 1 }, { startTime: 1439, finishBy: null }, { startPlaceId: 'hotel' }, { startPlaceId: 'fushimi', finishBy: 1439 }, { endPlaceId: 'hotel' }, { endPlaceId: 'nijo' }]) {
     const trip = seedTrip(); Object.assign(trip.days[0], settings);
     assert.equal(isTrip(trip), true, JSON.stringify(settings));
   }
@@ -316,6 +371,23 @@ check('sample optimiser never claims savings for a live-route itinerary', () => 
   assert.equal(proposeOrder(plan, PLACES, {}), null);
   assert.equal(proposeOrder(plan, { ...PLACES, heian: { ...PLACES.heian, lat: 35, lng: 135 } }), null);
   assert.equal(proposeOrder(plan, { ...PLACES, hotel: { ...PLACES.hotel, googlePlaceId: 'ChIJExample' } }), null);
+  assert.equal(proposeOrder({ ...plan, endPlaceId: 'airport' }, { ...PLACES, airport: { ...PLACES.hotel, id: 'airport', googlePlaceId: 'ChIJAirport' } }), null);
+});
+
+check('sample optimisation accounts for an airport endpoint instead of returning to the hotel', () => {
+  const places = {
+    ...PLACES,
+    hotel: { ...PLACES.hotel, x: 0, y: 0 },
+    nijo: { ...PLACES.nijo, x: 20, y: 0 },
+    heian: { ...PLACES.heian, x: 80, y: 0 },
+    airport: { ...PLACES.hotel, id: 'airport', x: 100, y: 0 },
+  };
+  const plan = day([activity('east', 'heian'), activity('west', 'nijo')], { endPlaceId: 'airport' });
+  const proposed = proposeOrder(plan, places);
+  assert.ok(proposed);
+  assert.deepEqual(proposed.items.map(item => item.aid), ['west', 'east']);
+  assert.equal(proposed.after, schedule({ ...plan, items: proposed.items }, places).travel);
+  assert.ok(proposed.saved > 0);
 });
 
 check('live place metadata validates and provider content is removed from persisted trips', () => {
@@ -410,4 +482,11 @@ check('restoration rejects corrupt nested data, duplicate IDs, invalid dates and
   assert.equal(isTrip(null), false); assert.equal(isTrip([]), false);
 });
 
+check('pacing and authored offline references validate while legacy trips stay compatible',()=>{
+ const value=seedTrip();assert.equal(isTrip(value),true);value.pace='moderate';value.days[0].pace='active';Object.assign(value.days[0].items[0],{meal:'meal',walkingMeters:0,exposure:'mixed'});
+ value.customPlaces.hotel={...PLACES.hotel,offlineDetails:{name:'My hotel',address:'Address entered by me',localAddress:'日本語',hours:'Check ticket'}};
+ assert.equal(isTrip(value),true);assert.deepEqual(persistableTrip(value).customPlaces.hotel.offlineDetails,value.customPlaces.hotel.offlineDetails);
+ const invalid=[t=>t.pace='fast',t=>t.days[0].pace=8,t=>t.days[0].items[0].meal='breakfast',t=>t.days[0].items[0].walkingMeters=-1,t=>t.days[0].items[0].walkingMeters=100001,t=>t.days[0].items[0].walkingMeters=.5,t=>t.days[0].items[0].exposure='rainproof',t=>t.customPlaces.hotel.offlineDetails.name='',t=>t.customPlaces.hotel.offlineDetails.name='x'.repeat(201),t=>t.customPlaces.hotel.offlineDetails.address=false,t=>t.customPlaces.hotel.offlineDetails.extra='not allowed'];
+ for(const mutate of invalid){const copy=structuredClone(value);mutate(copy);assert.equal(isTrip(copy),false);}
+});
 console.log(`\n${assertions} planning model checks passed.`);

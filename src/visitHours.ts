@@ -9,8 +9,12 @@ export interface VisitHoursCheck {
   availableMinutes?: number;
   /** An earlier time on the arrival day at which the whole visit fits. */
   suggestedStart?: number;
+  reason?: 'closed-day' | 'last-entry' | 'closing' | 'before-open';
+  /** Waiting for a later opening on this calendar day; never inferred with unknown routing. */
+  waitMinutes?: number;
+  nextOpen?: number;
 }
-export interface VisitHoursOptions { date: string; start: number; end: number; approx?: boolean }
+export interface VisitHoursOptions { date: string; start: number; end: number; approx?: boolean; allowWait?: boolean }
 const DAY = 1_440, WEEK = 7 * DAY, DAY_MS = 86_400_000;
 const unknown = (detail = 'Opening hours are unavailable. Check with the place before visiting.'): VisitHoursCheck => ({ status: 'unknown', label: 'Hours to confirm', detail, source: 'unavailable' });
 const validPoint = (p: OpeningPoint) => Number.isInteger(p.day) && p.day >= 0 && p.day < 7 && Number.isInteger(p.hour) && p.hour >= 0 && p.hour < 24 && Number.isInteger(p.minute) && p.minute >= 0 && p.minute < 60;
@@ -50,7 +54,7 @@ function spansForDay(schedule: OpeningSchedule, day: number): Span[] | null {
 }
 
 /** Compare the physical visit window against place-local hours, never device time. */
-export function checkVisitHours(info: OpeningInfo | undefined, options: VisitHoursOptions): VisitHoursCheck {
+function checkActualVisitHours(info: OpeningInfo | undefined, options: VisitHoursOptions): VisitHoursCheck {
   if (!info) return unknown();
   if (info.businessStatus === 'CLOSED_PERMANENTLY') return { ...unknown(), status: 'closed', label: 'Permanently closed', detail: 'Google lists this place as permanently closed. Choose another stop.' };
   if (info.businessStatus === 'CLOSED_TEMPORARILY') return { ...unknown(), status: 'closed', label: 'Temporarily closed', detail: 'Google currently lists this place as temporarily closed. Confirm whether it will reopen for your trip.' };
@@ -58,6 +62,14 @@ export function checkVisitHours(info: OpeningInfo | undefined, options: VisitHou
   const base = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
   if (!base || !Number.isFinite(base.getTime()) || base.toISOString().slice(0, 10) !== date || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end - start > WEEK || end > 31 * DAY) return unknown('The visit time needs confirmation before opening hours can be checked.');
   const firstDay = Math.floor(start / DAY), lastDay = Math.floor((end - 1) / DAY);
+  const visitDate = new Date(base.getTime() + firstDay * DAY_MS);
+  const lastEntry = info.lastEntryMinutes?.[visitDate.getUTCDay()];
+  if (!approx && Number.isInteger(lastEntry) && lastEntry! >= 0 && lastEntry! < DAY && start % DAY > lastEntry!) {
+    const summary = getOpeningSummary(info, { date: visitDate.toISOString().slice(0, 10) });
+    return { status: 'closed', reason: 'last-entry', label: `After last entry · ${clock(lastEntry!)}`,
+      detail: `Your ${clock(start)} arrival is after the confirmed ${clock(lastEntry!)} last entry. Check admission conditions before visiting.`,
+      source: summary.source, availableMinutes: 0 };
+  }
   let source: VisitHoursCheck['source'] = 'current';
   let firstDayLabel = '', firstDayClosed = false;
   const spans: Span[] = [];
@@ -75,7 +87,7 @@ export function checkVisitHours(info: OpeningInfo | undefined, options: VisitHou
   const note = source === 'regular' ? 'Based on regular weekly hours; holiday hours may differ. Confirm before visiting.' : 'Based on Google hours for this date; last-minute changes are possible.';
   const prefix = source === 'regular' ? 'Usually ' : '';
   if (approx) {
-    if (firstDayClosed) return { status: 'closed', label: `${prefix}${prefix ? 'closed' : 'Closed'} on ${firstDayLabel}`, detail: `This day is listed as closed, regardless of the arrival time. ${note}`, source, availableMinutes: 0 };
+    if (firstDayClosed) return { status: 'closed', reason: 'closed-day', label: `${prefix}${prefix ? 'closed' : 'Closed'} on ${firstDayLabel}`, detail: `This day is listed as closed, regardless of the arrival time. ${note}`, source, availableMinutes: 0 };
     return { status: 'unknown', label: 'Arrival time to confirm', detail: `A journey time is missing, so the visit cannot yet be checked against opening hours. ${note}`, source };
   }
   const duration = end - start;
@@ -87,7 +99,38 @@ export function checkVisitHours(info: OpeningInfo | undefined, options: VisitHou
   if (activeSpan && end <= activeSpan[1]) return { status: 'fits', label: source === 'regular' ? 'Fits regular hours' : 'Fits opening hours', detail: note, source, availableMinutes: activeSpan[1] - start };
   if (activeSpan) {
     const availableMinutes = activeSpan[1] - start;
-    return { status: 'short', label: `${availableMinutes} min before ${source === 'regular' ? 'regular ' : ''}closing`, detail: `Your ${duration}-minute visit extends past ${clock(activeSpan[1])}${activeSpan[1] >= (firstDay + 1) * DAY ? ' the next day' : ''}. ${note}`, source, availableMinutes, ...(suggestedStart !== undefined ? { suggestedStart } : {}) };
+    return { status: 'short', reason: 'closing', label: `${availableMinutes} min before ${source === 'regular' ? 'regular ' : ''}closing`, detail: `Your ${duration}-minute visit extends past ${clock(activeSpan[1])}${activeSpan[1] >= (firstDay + 1) * DAY ? ' the next day' : ''}. ${note}`, source, availableMinutes, ...(suggestedStart !== undefined ? { suggestedStart } : {}) };
   }
-  return { status: 'closed', label: `${prefix}${prefix ? 'closed' : 'Closed'} at arrival`, detail: `${firstDayClosed ? `${firstDayLabel} is listed as closed.` : `The place is closed at your planned ${clock(start)} arrival.`} ${note}`, source, availableMinutes: 0, ...(suggestedStart !== undefined ? { suggestedStart } : {}) };
+  return { status: 'closed', ...(firstDayClosed ? { reason: 'closed-day' as const } : {}), label: `${prefix}${prefix ? 'closed' : 'Closed'} at arrival`, detail: `${firstDayClosed ? `${firstDayLabel} is listed as closed.` : `The place is closed at your planned ${clock(start)} arrival.`} ${note}`, source, availableMinutes: 0, ...(suggestedStart !== undefined ? { suggestedStart } : {}) };
+}
+
+/** Minutes to the next opening on the arrival day. Never waits through an overnight closure. */
+export function openingWaitMinutes(info: OpeningInfo | undefined, options: VisitHoursOptions): number {
+  if (!info || options.approx || options.allowWait === false || info.businessStatus?.startsWith('CLOSED_')
+    || !Number.isInteger(options.start) || options.start < 0 || options.start > 31 * DAY) return 0;
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(options.date) ? new Date(`${options.date}T00:00:00Z`) : null;
+  if (!base || !Number.isFinite(base.getTime()) || base.toISOString().slice(0, 10) !== options.date) return 0;
+  const offset = Math.floor(options.start / DAY), start = options.start % DAY;
+  const date = new Date(base.getTime() + offset * DAY_MS);
+  const summary = getOpeningSummary(info, { date: date.toISOString().slice(0, 10) });
+  const schedule = summary.source === 'current' ? info.currentHours : summary.source === 'regular' ? info.regularHours : undefined;
+  const spans = schedule ? spansForDay(schedule, date.getUTCDay()) : null;
+  if (!spans || spans.some(([left, right]) => start >= left && start < right)) return 0;
+  const next = spans.find(([left]) => left > start)?.[0];
+  if (next === undefined) return 0;
+  const lastEntry = info.lastEntryMinutes?.[date.getUTCDay()];
+  if (Number.isInteger(lastEntry) && lastEntry! >= 0 && lastEntry! < DAY && next > lastEntry!) return 0;
+  return next - start;
+}
+
+export function checkVisitHours(info: OpeningInfo | undefined, options: VisitHoursOptions): VisitHoursCheck {
+  const original = checkActualVisitHours(info, options);
+  const waiting = openingWaitMinutes(info, options);
+  if (!waiting || original.status === 'unknown') return original;
+  const delayed = checkActualVisitHours(info, { ...options, start: options.start + waiting, end: options.end + waiting });
+  if (delayed.status === 'closed' || delayed.status === 'unknown') return original;
+  return { ...delayed, reason: delayed.status === 'fits' ? 'before-open' : delayed.reason,
+    ...(delayed.status === 'fits' ? { label: `Opens ${clock(options.start + waiting)} · wait ${waiting} min` } : {}),
+    detail: `Wait ${waiting} minutes for opening at ${clock(options.start + waiting)}. ${delayed.detail}`,
+    waitMinutes: waiting, nextOpen: options.start + waiting };
 }

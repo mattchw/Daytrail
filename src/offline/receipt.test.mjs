@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const code=ts.transpileModule(readFileSync(new URL('./useSyncReceipt.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replace(/from ['"]react['"]/g,`from ${JSON.stringify(import.meta.resolve('react'))}`);
+const {initialSyncReceipt,reduceSyncReceipt}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+const input=(patch={})=>({identity:'owner:account',online:false,verified:true,pendingCount:2,blocked:false,acknowledgedCount:0,...patch});let passed=0;const check=(name,run)=>{run();passed++;console.log(`✓ ${name}`);};
+check('receipt needs actual server acknowledgement after reconnect',()=>{const start=initialSyncReceipt(input());assert.equal(reduceSyncReceipt(start,input({online:true,pendingCount:0})).receipt,null);assert.equal(reduceSyncReceipt(start,input({online:true,pendingCount:0,acknowledgedCount:1}),123).receipt.at,123);});
+check('conflicts and failed saves suppress completion even with earlier acknowledged changes',()=>{const start=initialSyncReceipt(input());assert.equal(reduceSyncReceipt(start,input({online:true,pendingCount:0,acknowledgedCount:1,blocked:true})).receipt,null);});
+check('remaining queued progress prevents claiming all changes synced',()=>{const start=initialSyncReceipt(input());assert.equal(reduceSyncReceipt(start,input({online:true,pendingCount:1,acknowledgedCount:1})).receipt,null);});
+check('unverified prepared account cannot show reconnect success',()=>{const start=initialSyncReceipt(input());assert.equal(reduceSyncReceipt(start,input({online:true,verified:false,pendingCount:0,acknowledgedCount:1})).receipt,null);});
+check('switching account clears receipt and cannot reuse previous account acknowledgements',()=>{const start=initialSyncReceipt(input());assert.equal(reduceSyncReceipt(start,input({identity:'other:account',online:true,pendingCount:0,acknowledgedCount:1})).receipt,null);});
+check('ordinary online saves do not claim a reconnection',()=>{const start=initialSyncReceipt(input({online:true}));assert.equal(reduceSyncReceipt(start,input({online:true,pendingCount:0,acknowledgedCount:1})).receipt,null);});
+check('an emitted receipt is not recreated by dismissing it',()=>{const start=initialSyncReceipt(input()),received=reduceSyncReceipt(start,input({online:true,pendingCount:0,acknowledgedCount:1}),123);assert.equal(reduceSyncReceipt({...received,receipt:null},input({online:true,pendingCount:0,acknowledgedCount:1}),456).receipt,null);});
+console.log(`\n${passed} reconnect receipt checks passed.`);

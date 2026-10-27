@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Journey, Place, Trip } from './model';
+import { hasEndJourney, type Journey, type Place, type Trip } from './model';
 import type { OpeningInfo } from './openingHours';
 import { fetchVisitOpeningInfo } from './discoveryData';
 import { unavailableJourney } from './googleMaps';
 import { calculateDayRoutes, pendingLegs, routeInputSignature, tripDayDate, type DayRouteInput } from './useLiveRoutes';
-import { createOverviewTaskPool, summarizeOverviewDay, type DayOverviewSummary, type OverviewDayData } from './overviewData';
+import { createOverviewTaskPool, overviewHoursByPlace, summarizeOverviewDay, type DayOverviewSummary, type OverviewDayData } from './overviewData';
 
 export type { DayOverviewSummary } from './overviewData';
 
@@ -29,17 +29,18 @@ const routeError = (legs: Record<string, Journey>) => {
   const count = Object.values(legs).filter(leg => leg.status === 'unavailable' || leg.min === null).length;
   return count ? `${count} ${count === 1 ? 'journey needs' : 'journeys need'} confirmation.` : null;
 };
-const googleIds = (input: DayRouteInput) => [...new Set(input.day.items.flatMap(item => input.places[item.placeId]?.googlePlaceId ?? []))];
+const googleIds = (input: DayRouteInput) => [...new Set(input.day.items.filter(item => item.mode !== 'flight' && !item.departureForFlightId).flatMap(item => input.places[item.placeId]?.googlePlaceId ?? []))];
+const routeKey = (signature: string, hours: Record<string, OpeningInfo>) => JSON.stringify([signature, hours]);
 function initialData(signature: string, input: DayRouteInput): OverviewDayData {
-  const cachedLegs = readCache(routeCache, signature);
   const ids = googleIds(input);
   const hours = Object.fromEntries(ids.flatMap(id => {
     const info = readCache(hoursCache, id);
     return info ? [[id, info]] : [];
   }));
+  const cachedLegs = readCache(routeCache, routeKey(signature, hours));
   return {
     legs: cachedLegs ?? pendingLegs(input),
-    routeLoading: !cachedLegs && input.day.items.length > 0,
+    routeLoading: (!cachedLegs || ids.some(id => !hours[id])) && hasEndJourney(input.day),
     hoursLoading: ids.some(id => !hours[id]),
     hours,
     error: cachedLegs ? routeError(cachedLegs) : null,
@@ -55,7 +56,12 @@ export function useTripOverview(trip: Trip, places: Record<string, Place>, enabl
   totalDays: number;
   retry: (dayId?: string) => void;
 } {
-  const signaturesKey = JSON.stringify(trip.days.map((_, index) => routeInputSignature(trip, index, places)));
+  const signaturesKey = JSON.stringify(trip.days.map((_, index) => {
+    const input = JSON.parse(routeInputSignature(trip, index, places)) as DayRouteInput;
+    // Confirmed admission edits are planning inputs, even when the provider ID stays the same.
+    for (const [id, place] of Object.entries(input.places)) place.lastEntryMinutes = places[id]?.lastEntryMinutes;
+    return JSON.stringify(input);
+  }));
   const entries = useMemo(() => (JSON.parse(signaturesKey) as string[]).map(signature => ({
     signature, input: JSON.parse(signature) as DayRouteInput,
   })), [signaturesKey]);
@@ -67,7 +73,7 @@ export function useTripOverview(trip: Trip, places: Record<string, Place>, enabl
     // cached there, so Retry can recover without paying for every known leg.
     for (const { signature, input } of entries) {
       if (dayId && input.day.id !== dayId) continue;
-      routeCache.delete(signature);
+      for (const cachedKey of routeCache.keys()) if (JSON.parse(cachedKey)[0] === signature) routeCache.delete(cachedKey);
       for (const id of googleIds(input)) hoursCache.delete(id);
     }
     setAttempt(value => value + 1);
@@ -87,35 +93,13 @@ export function useTripOverview(trip: Trip, places: Record<string, Place>, enabl
     // Allow quick move/undo operations to settle before initiating billed calls.
     const timer = window.setTimeout(() => {
       for (const { signature, input } of entries) {
-        if (!input.day.items.length) continue;
+        if (!hasEndJourney(input.day)) continue;
         void enqueueDay(async () => {
           const data = initialData(signature, input);
           if (!active) return;
-          if (data.routeLoading) {
-            try {
-              const legs = await calculateDayRoutes(input, (id, leg) => {
-                if (!active) return;
-                data.legs[id] = leg;
-                publish(input.day.id, data);
-              }, current);
-              if (!active) return;
-              data.legs = legs;
-              // Failed results are retryable; completed successful plans also
-              // make switching views and undoing a move immediate.
-              if (!routeError(legs)) writeCache(routeCache, signature, legs);
-              data.error = routeError(legs);
-            } catch {
-              if (!active) return;
-              data.legs = Object.fromEntries(Object.entries(data.legs).map(([id, leg]) => [id,
-                leg.status === 'loading' ? unavailableJourney(leg.mode, 'Route unavailable. Please retry.') : leg]));
-              data.error = 'Some journeys could not load. Please retry.';
-            }
-            data.routeLoading = false;
-            publish(input.day.id, data);
-          }
           let hoursFailed = false;
-          // Sequential within each of the two day workers bounds requests and
-          // shares the discovery/active-day service's in-flight hours cache.
+          // Opening waits change every following transit departure: establish
+          // the hours evidence before requesting any of this day's journeys.
           for (const id of googleIds(input)) {
             if (!active) return;
             if (data.hours[id]) continue;
@@ -129,6 +113,28 @@ export function useTripOverview(trip: Trip, places: Record<string, Place>, enabl
           }
           if (!active) return;
           data.hoursLoading = false;
+          if (data.routeLoading) {
+            try {
+              const legs = await calculateDayRoutes({...input,hours:overviewHoursByPlace(input.day,input.places,data.hours)}, (id, leg) => {
+                if (!active) return;
+                data.legs[id] = leg;
+                publish(input.day.id, data);
+              }, current);
+              if (!active) return;
+              data.legs = legs;
+              // Failed results are retryable; completed successful plans also
+              // make switching views and undoing a move immediate.
+              if (!routeError(legs)) writeCache(routeCache, routeKey(signature,data.hours), legs);
+              data.error = routeError(legs);
+            } catch {
+              if (!active) return;
+              data.legs = Object.fromEntries(Object.entries(data.legs).map(([id, leg]) => [id,
+                leg.status === 'loading' ? unavailableJourney(leg.mode, 'Route unavailable. Please retry.') : leg]));
+              data.error = 'Some journeys could not load. Please retry.';
+            }
+            data.routeLoading = false;
+            publish(input.day.id, data);
+          }
           if (hoursFailed) data.error = [data.error, 'Some opening hours could not load.'].filter(Boolean).join(' ');
           publish(input.day.id, data);
         }, current).catch(() => {
@@ -146,7 +152,7 @@ export function useTripOverview(trip: Trip, places: Record<string, Place>, enabl
   const days = Object.fromEntries(trip.days.map((day, index) => {
     const { signature, input } = entries[index];
     const data = state.key === key && state.byDay[day.id] ? state.byDay[day.id] : initialData(signature, input);
-    return [day.id, summarizeOverviewDay(day, tripDayDate(trip.startDate, index), places, data)];
+    return [day.id, summarizeOverviewDay(day, tripDayDate(trip.startDate, index), places, data, { trip, dayIndex: index })];
   }));
   const completedDays = Object.values(days).filter(day => !day.routeLoading && !day.hoursLoading).length;
   return { days, loading: enabled && completedDays < trip.days.length, completedDays, totalDays: trip.days.length, retry };

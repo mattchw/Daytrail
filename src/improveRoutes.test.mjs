@@ -9,7 +9,7 @@ const dataURL = source => `data:text/javascript;base64,${Buffer.from(source).toS
 const urls = { react: import.meta.resolve('react') };
 const add = (name, source = compile(`./${name}.ts`)) => urls[`./${name}`] = dataURL(source.replace(/from (['"])([^'"]+)\1/g,
   (match, _, path) => urls[path] ? `from ${JSON.stringify(urls[path])}` : match));
-add('model'); add('openingHours'); add('visitHours');
+add('model'); add('openingHours'); add('visitHours'); add('hoursPlanning');
 add('googleMaps', compile('./googleMaps.ts').replaceAll('import.meta.env', '({})'));
 add('discoveryData', 'export async function fetchVisitOpeningInfo() { throw new Error("Test must inject a provider"); }');
 add('useLiveRoutes'); add('improveDay'); add('improveRoutes'); add('useImproveDay');
@@ -97,6 +97,23 @@ await check('8 stops plus distinct departure and return stay within 100 elements
   input.day.items.push({ ...input.day.items[0], aid: 'extra' });
   await assert.rejects(() => createImproveMatrixService(provider(async () => { throw new Error('Must not request'); }))(input), /up to 8/);
 });
+await check('a separate airport endpoint replaces the unused hotel in the bounded route matrix', async () => {
+  const input = fixture(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  input.places.airport = point('airport', 30);
+  Object.assign(input.day, { startPlaceId: 'start', endPlaceId: 'airport' });
+  delete input.places.hotel;
+  let elements;
+  const compute = createImproveMatrixService(provider(async request => {
+    elements = request.origins.length * request.destinations.length; return response(request.origins.length);
+  }));
+  const result = await compute(input);
+  assert.equal(elements, 100);
+  assert.ok(result.airport); assert.ok(result.h.airport); assert.equal(result.hotel, undefined);
+  let calls = 0;
+  const cached = createImproveMatrixService(provider(async request => { calls++; return response(request.origins.length); }));
+  await cached(input); await cached(input); assert.equal(calls, 1);
+  input.places.airport.lat += 0.1; await cached(input); assert.equal(calls, 2);
+});
 await check('partial unavailable and malformed cells remain unknown rather than becoming straight-line travel', async () => {
   const result = await createImproveMatrixService(provider(async () => response(3, (i, j) => i === 0 && j === 1
     ? { condition: 'ROUTE_NOT_FOUND' } : i === 1 && j === 0 ? { condition: 'ROUTE_EXISTS', durationMillis: -1, distanceMeters: 10 }
@@ -148,6 +165,22 @@ await check('verified comparison shows actual route savings instead of matrix sa
   assert.match(result.proposal.warning, /sidewalks/);
   assert.deepEqual(input.day.items.map(item => item.aid), ['a', 'b']);
 });
+await check('baseline and candidate verification finish at the selected airport and endpoint edits invalidate review', async () => {
+  const input = fixture(); input.day.endPlaceId = 'start';
+  const value = goodMatrix(input); value.a.start = ready(5);
+  const calls = [], now = Date.now(), observed = signature(input);
+  const result = await runImproveDay(input, undefined, undefined, { matrix: async () => value, now: () => now,
+    journey: async (from, to, mode) => {
+      calls.push([from.id, to.id]);
+      return ready(['hotel:b', 'b:a', 'a:start'].includes(`${from.id}:${to.id}`) ? 5 : 10, mode);
+    } });
+  assert.equal(result.phase, 'proposal');
+  assert.deepEqual(calls, [['hotel', 'a'], ['a', 'b'], ['b', 'start'], ['hotel', 'b'], ['b', 'a'], ['a', 'start']]);
+  assert.equal(result.proposal.suggested.saving, 15);
+  assert.equal(isImproveProposalCurrent(input, result.proposal, observed, now), true);
+  input.day.endPlaceId = 'hotel';
+  assert.equal(isImproveProposalCurrent(input, result.proposal, observed, now), false);
+});
 await check('ineligible mixed modes issue no paid requests', async () => {
   const input = fixture(); input.day.endMode = 'drive';
   const result = await runImproveDay(input, undefined, undefined, { matrix: async () => { throw new Error('Must not request'); } });
@@ -173,6 +206,13 @@ await check('fresh hours replace old evidence, and unavailable hours are allowed
   assert.equal(result.proposal.hours.a.businessStatus, undefined);
   assert.equal(result.proposal.hours.b, undefined);
   assert.notEqual(result.proposal.inputSignature, signature(input));
+});
+await check('confirmed last entry survives a failed Google hours refresh',async()=>{
+ const input=fixture();input.places.a.googlePlaceId='provider-a';
+ input.hours.a={...openHours,lastEntryMinutes:{1:555}};
+ const result=await runImproveDay(input,undefined,undefined,{matrix:async()=>goodMatrix(input),journey:realJourney,
+   fetchHours:async()=>{throw Error('Hours unavailable');}});
+ assert.equal(result.phase,'none');
 });
 await check('verified travel reruns opening checks and rejects a newly short visit', async () => {
   const input = fixture(); input.places.b.googlePlaceId = 'provider-b';

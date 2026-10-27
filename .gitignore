@@ -6,3 +6,7 @@ dist/
 reference/
 qa/
 *.tsbuildinfo
+
+# Supabase CLI local link/config state (credentials stay in the CLI credential store).
+supabase/.temp/
+supabase/.branches/

@@ -23,6 +23,11 @@
 .overview-day h3{font-size:17px;font-weight:680;line-height:1.35;letter-spacing:-.35px;overflow-wrap:anywhere}
 .overview-day-count{display:flex;flex-wrap:wrap;gap:5px;font-size:11px;color:#687261;margin-top:7px;line-height:1.5}
 .overview-day-count>span{color:#aaa99a;padding:0 2px}
+.overview-endpoints{display:flex;flex-direction:column;gap:11px;padding:0 18px 16px}
+.overview-endpoints>div{display:flex;gap:8px;align-items:center;min-width:0}.overview-endpoints>div>span:last-child{min-width:0}
+.overview-endpoint-marker{flex-shrink:0;display:grid;place-items:center;width:23px;height:23px;border-radius:50%;background:#e5eeea;color:#0e6e68;font-size:10px;font-weight:750}.overview-endpoint-marker.is-end{border-radius:6px;background:#f0e8de;color:#8b633e}
+.overview-endpoints small{display:block;font-size:9px;color:#788272;line-height:1.5}.overview-endpoints strong{display:block;font-size:11px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.overview-empty-day.is-transfer{min-height:220px;border-top:0}
 .overview-timing{display:flex;flex-direction:column;gap:7px;padding:11px 18px;background:#f6f5ee;border-top:1px solid #ede8dc;border-bottom:1px solid #ede8dc;color:#657466;font-size:10px;line-height:1.55}
 .overview-timing>div{display:flex;gap:7px;align-items:flex-start}.overview-timing svg{flex-shrink:0;margin-top:1px;color:#6f7c68}
 .overview-timing b{font-weight:400;margin:0 5px;color:#9b9f91}
@@ -75,3 +80,4 @@
 @media print{.trip-overview{overflow:visible}.overview-inner{padding:0}.overview-heading .button,.overview-drag,.overview-move,.overview-idea-add,.overview-extend,.overview-progress{display:none!important}.overview-layout{display:block}.overview-day-grid{display:block}.overview-day{break-inside:avoid;margin-bottom:18px}.overview-ideas{margin-top:18px}.overview-open-day{display:none}.overview-footnote{font-size:9px}}
 
 .overview-stats>button{border:0;background:transparent;min-height:44px;border-radius:7px}.overview-stats>button:hover{background:#e8ede1}.overview-stats>button span{color:#486e57}.overview-stats>button strong{color:#345c45}.overview-ideas{scroll-margin-top:22px}.overview-ideas h3:focus-visible{outline:2px solid var(--teal,#0e6e68);outline-offset:4px;border-radius:3px}
+.overview-travel-day{display:flex;align-items:center;gap:8px;min-height:44px;margin:0 20px 12px;padding:7px 0;border:0;background:transparent;color:var(--teal,#0e6e68);font-size:12px;font-weight:650;text-align:left}.overview-travel-day svg:last-child{margin-left:auto}.overview-travel-day:hover{text-decoration:underline;text-underline-offset:3px}

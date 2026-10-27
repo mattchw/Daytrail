@@ -1,6 +1,7 @@
 import { dayStartTime, schedule, type Activity, type Day, type Journey, type Place } from './model';
 import type { OpeningInfo } from './openingHours';
 import { checkVisitHours, type VisitHoursCheck } from './visitHours';
+import { scheduleWithOpeningHours } from './hoursPlanning';
 
 /** All provider data here is transient; only a reviewed order is saved to the trip. */
 export interface ImproveInput {
@@ -23,7 +24,7 @@ export interface ImproveEvaluation {
   checks: Record<string, VisitHoursCheck>;
   unknownHours: number;
   regularHours: number;
-  /** Number of late bookings plus visits that do not fit known opening hours. */
+  /** Late bookings, visits outside known hours, and a missed finish deadline. */
   conflicts: number;
   feasible: boolean;
 }
@@ -57,14 +58,15 @@ function movableSegments(input: ImproveInput): number[][] {
 
 export function eligibility(input: ImproveInput): ImproveEligibility {
   const { day, places } = input;
+  if (day.endMode === 'flight' || day.endFlightId || day.items.some(item => item.mode === 'flight' || item.flightId)) return { ok: false, reason: 'Days with flights keep their scheduled order. Flight-day reordering is not supported yet.' };
   if (day.items.length < 2) return { ok: false, reason: 'Add at least two stops to compare their order.' };
   if (day.items.length > MAX_IMPROVE_STOPS) return { ok: false, reason: 'This comparison supports up to 8 stops in one day. Move some visits to another day first.' };
   if (day.endMode === 'transit' || day.items.some(item => item.mode !== day.endMode)) {
-    return { ok: false, reason: 'Choose walking for every journey, or driving for every journey, including the return. Mixed modes and public transport cannot be compared yet.', action: 'modes' };
+    return { ok: false, reason: 'Choose walking for every journey, or driving for every journey, including the final journey. Mixed modes and public transport cannot be compared yet.', action: 'modes' };
   }
-  if (!validCoordinates(places[day.startPlaceId ?? 'hotel']) || !validCoordinates(places.hotel)
+  if (!validCoordinates(places[day.startPlaceId ?? 'hotel']) || !validCoordinates(places[day.endPlaceId ?? 'hotel'])
     || day.items.some(item => !validCoordinates(places[item.placeId]))) {
-    return { ok: false, reason: 'Choose a mapped location for the departure, return and every stop before comparing routes.', action: 'locations' };
+    return { ok: false, reason: 'Choose a mapped location for the start, end and every stop before comparing routes.', action: 'locations' };
   }
   const date = new Date(`${input.date}T00:00:00Z`);
   let validTimezone = true;
@@ -88,12 +90,12 @@ export function eligibility(input: ImproveInput): ImproveEligibility {
 /** Names and notes do not affect the comparison. A note edited during review survives Apply. */
 export function signature(input: ImproveInput): string {
   const { day, places } = input;
-  const ids = [...new Set([day.startPlaceId ?? 'hotel', 'hotel', ...day.items.map(item => item.placeId)])].sort();
+  const ids = [...new Set([day.startPlaceId ?? 'hotel', day.endPlaceId ?? 'hotel', ...day.items.map(item => item.placeId)])].sort();
   const activityIds = new Set(day.items.map(item => item.aid));
   return JSON.stringify({
     tripId: input.tripId, date: input.date, timezone: input.timezone, dayId: day.id,
     startTime: dayStartTime(day), finishBy: day.finishBy ?? null,
-    startPlaceId: day.startPlaceId ?? 'hotel', endMode: day.endMode,
+    startPlaceId: day.startPlaceId ?? 'hotel', endPlaceId: day.endPlaceId ?? 'hotel', endMode: day.endMode,
     items: day.items.map(({ aid, placeId, duration, fixed, mode }) => ({ aid, placeId, duration, fixed, mode })),
     places: ids.map(id => ({ id, googlePlaceId: places[id]?.googlePlaceId ?? null, lat: places[id]?.lat ?? null, lng: places[id]?.lng ?? null })),
     hours: [...new Set(day.items.map(item => item.placeId))].sort().map(id => [id, input.hours[id] ?? null]),
@@ -109,7 +111,7 @@ export function legsForOrder(input: ImproveInput, items: Activity[], matrix: Imp
     if (leg) legs[item.aid] = leg;
     previous = item.placeId;
   }
-  const returnLeg = matrix[previous]?.hotel;
+  const returnLeg = matrix[previous]?.[input.day.endPlaceId ?? 'hotel'];
   if (returnLeg) legs.return = returnLeg;
   return legs;
 }
@@ -122,7 +124,7 @@ function evaluateSchedule(input: ImproveInput, result: ReturnType<typeof schedul
     const key = `${row.it.aid}:${start}:${row.physicalEnd}:${row.approx}`;
     let check = cache?.get(key);
     if (!check) {
-      check = checkVisitHours(input.hours[row.it.placeId], { date: input.date, start, end: row.physicalEnd, approx: row.approx });
+      check = checkVisitHours(input.hours[row.it.placeId], { date: input.date, start, end: row.physicalEnd, approx: row.approx, allowWait: row.it.fixed === null });
       if (cache) {
         if (cache.size >= 12_000) cache.clear();
         cache.set(key, check);
@@ -134,11 +136,12 @@ function evaluateSchedule(input: ImproveInput, result: ReturnType<typeof schedul
     if (check.status === 'closed' || check.status === 'short') conflicts += 1;
     if (row.late > 0) conflicts += 1;
   }
+  if (input.day.finishBy != null && result.finish > input.day.finishBy) conflicts += 1;
   return { schedule: result, checks, unknownHours, regularHours, conflicts, feasible: result.unknown === 0 && !result.finishApprox && conflicts === 0 };
 }
 
 export function evaluateOrder(input: ImproveInput, items: Activity[], legs: Record<string, Journey>): ImproveEvaluation {
-  return evaluateSchedule(input, schedule({ ...input.day, items }, input.places, legs));
+  return evaluateSchedule(input, scheduleWithOpeningHours({ ...input.day, items }, input.places, legs, { date: input.date, hours: input.hours }));
 }
 
 function* legalOrders(input: ImproveInput): Generator<Activity[]> {
@@ -186,9 +189,10 @@ export async function searchOrders(input: ImproveInput, matrix: ImproveMatrix, c
       assertCurrent(current);
     }
     const legs = legsForOrder(input, items, matrix);
-    const result = schedule({ ...input.day, items }, input.places, legs);
+    const result = scheduleWithOpeningHours({ ...input.day, items }, input.places, legs, { date: input.date, hours: input.hours });
     const saving = baseline.schedule.travel - result.travel;
-    if (result.unknown || result.finishApprox || result.late > 0 || result.finish > baseline.schedule.finish || saving < MIN_IMPROVEMENT_MINUTES) continue;
+    if (result.unknown || result.finishApprox || result.late > 0 || result.finish > baseline.schedule.finish
+      || (input.day.finishBy != null && result.finish > input.day.finishBy) || saving < MIN_IMPROVEMENT_MINUTES) continue;
     const moved = items.filter((item, index) => item.aid !== input.day.items[index].aid).length;
     if (best.length === 3) {
       const worst = best[best.length - 1];

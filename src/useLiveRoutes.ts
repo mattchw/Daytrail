@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { dayStartPlace, dayStartTime, type Day, type Journey, type Place, type Trip } from './model';
+import { dayEndPlace, dayStartPlace, dayStartTime, dayTimezone, dayMinutesAt, flightJourney, hasEndJourney, incomingFlightStartIssue, type Day, type FlightSegment, type Journey, type Place, type Trip } from './model';
 import { computeJourney, hasCoordinates, unavailableJourney } from './googleMaps';
+import type {OpeningInfo} from './openingHours';
+import {openingWaitMinutes} from './visitHours';
+import {localDateAt} from './model';
 
-export interface DayRouteInput { date: string; timezone: string; day: Day; places: Record<string, Place> }
+export interface DayRouteInput { date: string; timezone: string; day: Day; places: Record<string, Place>; flights?: FlightSegment[]; incomingFlightIssue?: string | null; hours?:Record<string,OpeningInfo|undefined> }
 export type JourneyComputer = typeof computeJourney;
 
 export function tripDayDate(startDate: string, dayIndex: number): string {
@@ -54,13 +57,17 @@ export function pendingLegs(input: DayRouteInput): Record<string, Journey> {
   let previous = dayStartPlace(input.day, input.places);
   for (const item of input.day.items) {
     const place = input.places[item.placeId];
-    result[item.aid] = hasCoordinates(previous) && hasCoordinates(place)
+    result[item.aid] = input.incomingFlightIssue ? unavailableJourney(item.mode, input.incomingFlightIssue)
+      : item.mode === 'flight' ? flightJourney(input.flights?.find(flight => flight.id === item.flightId), previous.id, place.id)
+      : hasCoordinates(previous) && hasCoordinates(place)
       ? { min: null, km: '—', mode: item.mode, status: 'loading', reason: 'Calculating route…' }
       : unavailableJourney(item.mode, 'Choose a map location');
     previous = place;
   }
-  result.return = input.day.items.length === 0 ? { min: 0, km: '0.0', mode: input.day.endMode, status: 'ready', path: [] }
-    : hasCoordinates(previous) && hasCoordinates(input.places.hotel)
+  result.return = input.incomingFlightIssue ? unavailableJourney(input.day.endMode, input.incomingFlightIssue)
+    : input.day.endMode === 'flight' ? flightJourney(input.flights?.find(flight => flight.id === input.day.endFlightId), previous.id, dayEndPlace(input.day, input.places).id)
+    : !hasEndJourney(input.day) ? { min: 0, km: '0.0', mode: input.day.endMode, status: 'ready', path: [] }
+    : hasCoordinates(previous) && hasCoordinates(dayEndPlace(input.day, input.places))
       ? { min: null, km: '—', mode: input.day.endMode, status: 'loading', reason: 'Calculating route…' }
       : unavailableJourney(input.day.endMode, 'Choose a map location');
   return result;
@@ -69,7 +76,7 @@ export function pendingLegs(input: DayRouteInput): Record<string, Journey> {
 /** Reuse only a real static journey with exactly the same endpoints and mode. */
 export function reuseReadyStaticLegs(input: DayRouteInput, priorInput: DayRouteInput | null, priorLegs: Record<string, Journey>): Record<string, Journey> {
   const next = pendingLegs(input);
-  if (!priorInput) return next;
+  if (!priorInput || input.incomingFlightIssue) return next;
   const pairs = (plan: DayRouteInput) => {
     let from = dayStartPlace(plan.day, plan.places);
     const result = plan.day.items.map(item => {
@@ -78,11 +85,11 @@ export function reuseReadyStaticLegs(input: DayRouteInput, priorInput: DayRouteI
       from = to;
       return pair;
     });
-    if (plan.day.items.length) result.push({ id: 'return', from, to: plan.places.hotel, mode: plan.day.endMode });
+    if (hasEndJourney(plan.day)) result.push({ id: 'return', from, to: dayEndPlace(plan.day, plan.places), mode: plan.day.endMode });
     return result;
   };
   const pairKey = (pair: ReturnType<typeof pairs>[number]) => {
-    if (pair.mode === 'transit' || !hasCoordinates(pair.from) || !hasCoordinates(pair.to)) return null;
+    if (pair.mode === 'flight' || pair.mode === 'transit' || !hasCoordinates(pair.from) || !hasCoordinates(pair.to)) return null;
     return JSON.stringify([pair.from.googlePlaceId ?? null, pair.from.lat, pair.from.lng,
       pair.to.googlePlaceId ?? null, pair.to.lat, pair.to.lng, pair.mode]);
   };
@@ -107,19 +114,25 @@ export async function calculateDayRoutes(
   now = Date.now(),
 ): Promise<Record<string, Journey>> {
   const result = pendingLegs(input);
-  if (!input.day.items.length) return result;
+  if (input.incomingFlightIssue || !hasEndJourney(input.day)) return result;
   let previous = dayStartPlace(input.day, input.places);
   let minutes = dayStartTime(input.day);
+  let departureInstant = zonedDeparture(input.date, minutes, input.timezone)?.getTime() ?? null;
+  let previousArrivalInstant = departureInstant;
   let uncertain = false;
-  const steps = [...input.day.items.map(item => ({ id: item.aid, place: input.places[item.placeId], mode: item.mode, duration: item.duration, fixed: item.fixed })),
-    { id: 'return', place: input.places.hotel, mode: input.day.endMode, duration: 0, fixed: null }];
+  let placeZone=input.timezone;
+  const steps = [...input.day.items.map(item => ({ id: item.aid, place: input.places[item.placeId], mode: item.mode,
+    duration: item.departureForFlightId ? input.flights?.find(flight => flight.id === item.departureForFlightId)?.airportBufferMinutes ?? 120 : item.duration,
+    fixed: item.fixed, flightId: item.flightId, airportAnchor:!!item.departureForFlightId })),
+    { id: 'return', place: dayEndPlace(input.day, input.places), mode: input.day.endMode, duration: 0, fixed: null, flightId: input.day.endFlightId, airportAnchor:false }];
   for (const step of steps) {
     if (!current()) return result;
     let leg: Journey;
-    if (!hasCoordinates(previous) || !hasCoordinates(step.place)) leg = unavailableJourney(step.mode, 'Choose a map location');
+    if (step.mode === 'flight') leg = flightJourney(input.flights?.find(flight => flight.id === step.flightId), previous.id, step.place.id);
+    else if (!hasCoordinates(previous) || !hasCoordinates(step.place)) leg = unavailableJourney(step.mode, 'Choose a map location');
     else if (step.mode === 'transit' && uncertain) leg = unavailableJourney(step.mode, 'Confirm earlier journeys before calculating this transit departure');
     else {
-      const departure = step.mode === 'transit' ? zonedDeparture(input.date, minutes, input.timezone) : undefined;
+      const departure = step.mode === 'transit' ? departureInstant === null ? zonedDeparture(input.date, minutes, input.timezone) : new Date(departureInstant) : undefined;
       const problem = step.mode === 'transit' ? departure ? transitDateReason(departure, now) : 'Choose a valid trip date and time zone' : null;
       leg = problem ? unavailableJourney(step.mode, problem) : await compute(previous, step.place, step.mode, departure ?? undefined);
     }
@@ -127,7 +140,24 @@ export async function calculateDayRoutes(
     result[step.id] = leg;
     onLeg(step.id, leg);
     if (leg.min === null) uncertain = true;
-    minutes = Math.max(minutes + (leg.min ?? 0), step.fixed ?? 0) + step.duration;
+    if (leg.flight) {
+      if ((departureInstant !== null ? departureInstant > leg.flight.departureMs : minutes > dayMinutesAt(leg.flight.departureMs, input.date, input.timezone))
+        || previousArrivalInstant !== null && previousArrivalInstant > leg.flight.departureGoalMs) uncertain = true;
+      minutes = dayMinutesAt(leg.flight.arrivalReadyMs, input.date, input.timezone) + step.duration;
+      departureInstant = leg.flight.arrivalReadyMs + step.duration * 60000;
+      previousArrivalInstant = leg.flight.arrivalReadyMs;
+      placeZone=input.flights?.find(f=>f.id===step.flightId)?.arrival.timezone??placeZone;
+    } else {
+      const fixedInstant = step.fixed === null ? null : zonedDeparture(input.date, step.fixed, input.timezone)?.getTime() ?? null;
+      if (departureInstant !== null && leg.min !== null) {
+        previousArrivalInstant = departureInstant + leg.min * 60000;
+        const arrival=Math.max(departureInstant + leg.min * 60000, fixedInstant ?? -Infinity);
+        const date=localDateAt(arrival,placeZone),start=dayMinutesAt(arrival,date,placeZone);
+        const wait=step.fixed===null&&!step.airportAnchor&&step.duration>0?openingWaitMinutes(input.hours?.[step.place.id],{date,start,end:start+step.duration,approx:uncertain}):0;
+        departureInstant = arrival + (wait+step.duration) * 60000;
+        minutes = dayMinutesAt(departureInstant, input.date, input.timezone);
+      } else { departureInstant = null; previousArrivalInstant = null; minutes = Math.max(minutes + (leg.min ?? 0), step.fixed ?? 0) + step.duration; }
+    }
     previous = step.place;
   }
   return result;
@@ -137,26 +167,29 @@ export async function calculateDayRoutes(
 export function routeInputSignature(trip: Trip, dayIndex: number, places: Record<string, Place>): string {
   const day = trip.days[dayIndex];
   const routePlaces: Record<string, Place> = {};
-  for (const id of [day.startPlaceId ?? 'hotel', 'hotel', ...day.items.map(item => item.placeId)]) {
+  for (const id of [day.startPlaceId ?? 'hotel', day.endPlaceId ?? 'hotel', ...day.items.map(item => item.placeId)]) {
     const place = places[id];
     if (place) routePlaces[id] = {
       id: place.id, name: '', cat: place.cat, x: 0, y: 0, area: '', typical: '', blurb: '',
       lat: place.lat, lng: place.lng, googlePlaceId: place.googlePlaceId,
     };
   }
-  return JSON.stringify({ date: tripDayDate(trip.startDate, dayIndex), timezone: trip.timezone,
+  const flightIds = new Set([day.endFlightId, ...day.items.flatMap(item => [item.flightId, item.departureForFlightId])].filter(Boolean));
+  return JSON.stringify({ date: tripDayDate(trip.startDate, dayIndex), timezone: dayTimezone(trip, day),
     day: {
-      id: day.id, label: '', date: '', title: '', endMode: day.endMode,
-      startTime: dayStartTime(day), startPlaceId: day.startPlaceId ?? 'hotel',
+      id: day.id, label: '', date: '', title: '', endMode: day.endMode, endFlightId: day.endFlightId, timezone: day.timezone,
+      startTime: dayStartTime(day), startPlaceId: day.startPlaceId ?? 'hotel', endPlaceId: day.endPlaceId ?? 'hotel',
       items: day.items.map(item => ({ ...item, note: '' })),
-    }, places: routePlaces });
+    }, places: routePlaces, incomingFlightIssue: incomingFlightStartIssue(trip, dayIndex),
+    flights: (trip.flights ?? []).filter(flight => flightIds.has(flight.id)).map(flight => ({ id: flight.id, fromPlaceId: flight.fromPlaceId, toPlaceId: flight.toPlaceId,
+      departure: flight.departure, arrival: flight.arrival, airportBufferMinutes: flight.airportBufferMinutes, arrivalBufferMinutes: flight.arrivalBufferMinutes })) });
 }
 
 interface RouteState { key: string; input: DayRouteInput | null; legs: Record<string, Journey>; loading: boolean; error: string | null }
-export function useLiveRoutes(trip: Trip, dayIndex: number, places: Record<string, Place>, enabled = true): {
+export function useLiveRoutes(trip: Trip, dayIndex: number, places: Record<string, Place>, enabled = true, hours:Record<string,OpeningInfo|undefined> = {}): {
   legs: Record<string, Journey>; loading: boolean; error: string | null; retry: () => void;
 } {
-  const signature = routeInputSignature(trip, dayIndex, places);
+  const signature = JSON.stringify({...JSON.parse(routeInputSignature(trip, dayIndex, places)),hours});
   const input = useMemo(() => JSON.parse(signature) as DayRouteInput, [signature]);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<RouteState>({ key: '', input: null, legs: {}, loading: false, error: null });
@@ -167,7 +200,7 @@ export function useLiveRoutes(trip: Trip, dayIndex: number, places: Record<strin
     let active = true;
     const legs = reuseReadyStaticLegs(input, latest.current.input, latest.current.legs);
     const publish = (next: RouteState) => { latest.current = next; setState(next); };
-    publish({ key, input, legs, loading: input.day.items.length > 0, error: null });
+    publish({ key, input, legs, loading: hasEndJourney(input.day), error: null });
     const timer = window.setTimeout(() => {
       void calculateDayRoutes(input, (id, leg) => {
         if (!active) return;
@@ -188,5 +221,5 @@ export function useLiveRoutes(trip: Trip, dayIndex: number, places: Record<strin
   const retry = useCallback(() => setAttempt(value => value + 1), []);
   if (!enabled) return { legs: {}, loading: false, error: null, retry };
   return state.key === key ? { legs: state.legs, loading: state.loading, error: state.error, retry }
-    : { legs: reuseReadyStaticLegs(input, state.input, state.legs), loading: input.day.items.length > 0, error: null, retry };
+    : { legs: reuseReadyStaticLegs(input, state.input, state.legs), loading: hasEndJourney(input.day), error: null, retry };
 }

@@ -1,6 +1,8 @@
-import { schedule, type Day, type Journey, type Place } from './model';
+import { schedule, scheduleVisitWindow, type Day, type Journey, type Place, type ScheduleContext } from './model';
 import type { OpeningInfo } from './openingHours';
 import { checkVisitHours, type VisitHoursCheck } from './visitHours';
+import { scheduleWithOpeningHours, type HoursByPlace } from './hoursPlanning';
+import { withPlaceAdmission } from './placeHours';
 
 export interface OverviewDayData {
   legs: Record<string, Journey>;
@@ -17,6 +19,8 @@ export interface DayOverviewSummary {
   routeLoading: boolean;
   hoursLoading: boolean;
   visitIssueCount: number;
+  /** Red opening/last-entry conflicts, separate from amber shortened visits. */
+  hoursConflictCount: number;
   hoursCheckedCount: number;
   hoursUnknownCount: number;
   hoursRegularCount: number;
@@ -24,14 +28,22 @@ export interface DayOverviewSummary {
   error: string | null;
 }
 
+export function overviewHoursByPlace(day: Day, places: Record<string, Place>, hours: Record<string, OpeningInfo>): HoursByPlace {
+  return Object.fromEntries(day.items.map(item => {
+    const place = places[item.placeId];
+    return [item.placeId, withPlaceAdmission(place?.googlePlaceId ? hours[place.googlePlaceId] : undefined, place)];
+  }));
+}
+
 /** Presentation always uses today's trip state and explicit provider journeys. */
-export function summarizeOverviewDay(day: Day, date: string, places: Record<string, Place>, data: OverviewDayData): DayOverviewSummary {
+export function summarizeOverviewDay(day: Day, date: string, places: Record<string, Place>, data: OverviewDayData, context?: ScheduleContext): DayOverviewSummary {
   // Supplying even an empty legs object is intentional: the model's illustrative
   // sample-distance fallback must never appear as a real whole-trip estimate.
-  const sc = schedule(day, places, data.legs);
-  const visitChecks = Object.fromEntries(sc.rows.map(row => [row.it.aid, checkVisitHours(
-    row.pl.googlePlaceId ? data.hours[row.pl.googlePlaceId] : undefined,
-    { date, start: Math.max(row.start, row.arrive), end: row.physicalEnd, approx: row.approx },
+  const hours = overviewHoursByPlace(day, places, data.hours);
+  const sc = scheduleWithOpeningHours(day, places, data.legs, {date, hours, context});
+  const visitChecks = Object.fromEntries(sc.rows.filter(row => row.it.mode !== 'flight' && !row.it.departureForFlightId).map(row => [row.it.aid, checkVisitHours(
+    hours[row.it.placeId],
+    {...scheduleVisitWindow(row, date), allowWait: row.it.fixed === null},
   )]));
   const checks = Object.values(visitChecks);
   const hoursUnknownCount = checks.filter(check => check.status === 'unknown').length;
@@ -42,6 +54,7 @@ export function summarizeOverviewDay(day: Day, date: string, places: Record<stri
     routeLoading: data.routeLoading,
     hoursLoading: data.hoursLoading,
     visitIssueCount: checks.filter(check => check.status === 'closed' || check.status === 'short').length,
+    hoursConflictCount: checks.filter(check => check.status === 'closed').length,
     hoursCheckedCount: checks.length - hoursUnknownCount,
     hoursUnknownCount,
     hoursRegularCount: checks.filter(check => check.source === 'regular').length,

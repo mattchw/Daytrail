@@ -1,12 +1,15 @@
 import {useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent} from 'react';
-import {ArrowLeft, ArrowRight, Bookmark, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Coffee, Compass, ExternalLink, Landmark, LoaderCircle, MapPin, Plus, Search, Star, Utensils, X} from 'lucide-react';
+import {ArrowLeft, ArrowRight, Bookmark, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Coffee, Compass, ExternalLink, Landmark, LoaderCircle, MapPin, Plus, Search, Star, Umbrella, Utensils, X} from 'lucide-react';
 import type {Place} from '../model';
+import {getWeekdayHoursLabel} from '../openingHours';
+import {withPlaceAdmission} from '../placeHours';
 import {getDiscoveryPhotoURL, getOpeningSummary, type DiscoveryCategory, type DiscoveryPhoto, type DiscoveryResult} from '../discoveryData';
 import './discovery.css';
 
 export type DiscoveryExplorerProps = {
   destination: string;
   dayLabel: string;
+  addHere?: boolean;
   tripDate: string;
   query: string;
   setQuery: (query: string) => void;
@@ -24,7 +27,7 @@ export type DiscoveryExplorerProps = {
   onSelect: (result: DiscoveryResult) => void;
   onBack: () => void;
   onBackToDestination: () => void;
-  onPreviewMap: (result: DiscoveryResult) => void;
+  onPreviewMap?: (result: DiscoveryResult) => void;
   onRetryDetails?: () => void;
   onSave: (place: Place) => void;
   onAdd: (place: Place) => void;
@@ -43,6 +46,7 @@ const filters: {value: DiscoveryCategory; label: string; icon: typeof Compass}[]
   {value:'museums',label:'Museums',icon:Landmark},
   {value:'restaurants',label:'Restaurants',icon:Utensils},
   {value:'cafes',label:'Cafés',icon:Coffee},
+  {value:'indoor',label:'Indoor ideas',icon:Umbrella},
 ];
 
 function readableType(value: string | undefined, place: Place) {
@@ -102,14 +106,14 @@ function PlaceActions({result,props}: {result:DiscoveryResult;props:DiscoveryExp
   return <div className="dx-place-actions">
     {status?<span className="dx-saved"><Check size={13}/>{status}</span>:<button type="button" className="dx-save" onClick={()=>props.onSave(result.place)} aria-label={`Save ${result.place.name} to Ideas`}><Bookmark size={14}/>Save</button>}
     {(!status||saved)&&<div className={`dx-add-group ${props.onChooseAdd?'dx-add-group-split':''}`}>
-      <button type="button" className="button primary small" onClick={()=>props.onAdd(result.place)} aria-label={`Add ${result.place.name} to ${props.dayLabel}`}><Plus size={13}/>Add to {props.dayLabel}</button>
+      <button type="button" className="button primary small" onClick={()=>props.onAdd(result.place)} aria-label={`Add ${result.place.name} ${props.addHere?'here':'to '+props.dayLabel}`}><Plus size={13}/>{props.addHere?'Add here':'Add to '+props.dayLabel}</button>
       {props.onChooseAdd&&<button type="button" className="dx-choose-add" onClick={()=>props.onChooseAdd?.(result.place)} aria-label={`Choose day and position for ${result.place.name}`} title="Choose a day and position"><ChevronDown size={15}/></button>}
     </div>}
   </div>;
 }
 
 function ResultCard({result,props,onSelect,now}: {result:DiscoveryResult;props:DiscoveryExplorerProps;onSelect:()=>void;now:Date}) {
-  const today=getOpeningSummary(result.info,{now}),photo=result.info.photos[0];
+  const today=getOpeningSummary(result.info,{date:props.tripDate,now}),photo=result.info.photos[0];
   return <article className="dx-card">
     <div className="dx-card-main">
       <button type="button" className="dx-photo-button" onClick={onSelect} aria-label={`View ${result.place.name}`}><LazyPhoto photo={photo} name={result.place.name}/></button>
@@ -120,7 +124,7 @@ function ResultCard({result,props,onSelect,now}: {result:DiscoveryResult;props:D
       </button>
     </div>
     <PhotoCredit photo={photo}/>
-    <p className={`dx-card-hours dx-hours-${today.status}`}><Clock3 size={12} aria-hidden="true"/><span><b>{today.label}</b>{today.hours.length>0&&<small>{today.hours.join(' · ')}</small>}</span></p>
+    <p className={`dx-card-hours dx-hours-${today.status}`}><Clock3 size={12} aria-hidden="true"/><span><b>{getWeekdayHoursLabel(withPlaceAdmission(result.info,result.place),props.tripDate)}</b><small>{today.dayLabel} · {props.dayLabel}</small></span></p>
     <PlaceActions result={result} props={props}/>
     <ProviderCredit place={result.place}/>
   </article>;
@@ -148,12 +152,12 @@ function DetailView({result,props,now}: {result:DiscoveryResult;props:DiscoveryE
         <h2 ref={title} tabIndex={-1}>{result.place.name}</h2>
         <Rating result={result}/>
         <p className="dx-address"><MapPin size={14} aria-hidden="true"/><span>{result.place.area||'Address unavailable'}</span></p>
-        <button type="button" className="dx-map-preview" onClick={()=>props.onPreviewMap(result)}><MapPin size={14}/>Explore on the map<ArrowRight size={14}/></button>
+        {props.onPreviewMap&&<button type="button" className="dx-map-preview" onClick={()=>props.onPreviewMap?.(result)}><MapPin size={14}/>Explore on the map<ArrowRight size={14}/></button>}
         <section className="dx-hours-section" aria-label="Opening hours">
           <div className="dx-hours-heading"><Clock3 size={15}/><h3>Opening hours</h3>{props.detailsLoading&&<LoaderCircle size={14} className="spin" aria-label="Loading opening hours"/>}</div>
           {props.detailsError&&<p className="dx-details-error" role="alert">{props.detailsError}{props.onRetryDetails&&<button type="button" onClick={props.onRetryDetails}>Try again</button>}</p>}
           <div className={`dx-today dx-hours-${today.status}`}><span className="dx-status-dot"/><span><strong>{today.label}</strong>{today.hours.length>0&&<small>Today · {today.hours.join(' · ')}</small>}</span></div>
-          <div className="dx-planned-hours"><span>For {props.dayLabel} · {formatDate(props.tripDate)}</span><strong>{hours.label}</strong>{hours.hours.length>0&&<p>{hours.hours.join(' · ')}</p>}{hours.detail&&<small>{hours.detail}</small>}</div>
+          <div className="dx-planned-hours"><span>For {props.dayLabel} · {formatDate(props.tripDate)}</span><strong>{getWeekdayHoursLabel(withPlaceAdmission(result.info,result.place),props.tripDate)}</strong>{hours.detail&&<small>{hours.detail}</small>}</div>
           {weekly.length>0&&<details className="dx-weekly-hours"><summary>Regular weekly hours</summary><ul>{weekly.map((line,index)=><li key={index}>{line}</li>)}</ul><p>Check with the place for holiday hours or special closures.</p></details>}
         </section>
         {result.place.googleMapsURI&&<a className="dx-google-link" href={result.place.googleMapsURI} target="_blank" rel="noreferrer">View on Google Maps<ExternalLink size={13}/></a>}
@@ -221,6 +225,7 @@ export default function DiscoveryExplorer(props:DiscoveryExplorerProps) {
           <div><Search size={16} aria-hidden="true"/><input id={inputId} type="search" value={props.query} onChange={event=>props.setQuery(event.target.value)} placeholder="Temples, coffee, hidden gems…" maxLength={240}/><button type="submit" aria-label="Search places" disabled={props.loading}>{props.loading?<LoaderCircle size={16} className="spin"/>:<ArrowRight size={16}/>}</button></div>
         </form>
         <div className="dx-filters" role="group" aria-label="Place category">{filters.map(({value,label})=><button type="button" key={value} aria-pressed={props.category===value} onClick={()=>{props.onScrollTop(0);props.onCategory(value);}}>{label}</button>)}</div>
+        {props.category==='indoor'&&<div className="dx-area-scope"><span><Umbrella size={12}/>Indoor ideas · check each venue’s details</span><button type="button" onClick={()=>props.onCategory('all')} aria-label="Clear indoor ideas filter"><X size={12}/>Clear</button></div>}
         {props.scope==='area'&&<div className="dx-area-scope"><span><MapPin size={12}/>{props.loading?'Searching this map area':'Results in this map area'}</span><button type="button" onClick={props.onBackToDestination}>Back to {city}</button></div>}
       </div>
       <div className="dx-results" ref={list} tabIndex={0} role="region" aria-label="Discovery results" onScroll={event=>{if(!restoringScroll.current&&!props.loading)props.onScrollTop(event.currentTarget.scrollTop);}} aria-busy={props.loading}>

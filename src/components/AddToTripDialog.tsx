@@ -25,8 +25,10 @@ export default function AddToTripDialog({place, days, places, initialDayIndex, o
   const safeDayIndex=Math.max(0,Math.min(dayIndex,days.length-1));
   const day=days[safeDayIndex];
   const items=day?.items.filter(item=>item.aid!==excludeActivityId)??[];
+  const firstFlight=items[0]?.mode==='flight'&&items[0]?.flightId?items[0]:null;
+  const directFlight=!items.length&&day?.endMode==='flight'&&day.endFlightId;
   const afterIndex=items.findIndex(item=>`after:${item.aid}`===position);
-  const index=position==='start'?0:afterIndex>=0?afterIndex+1:items.length;
+  const index=Math.max(firstFlight?1:0,position==='start'?0:afterIndex>=0?afterIndex+1:items.length);
   const before=items[index-1],after=items[index];
   const nameOf=(placeId:string)=>places[placeId]?.name||'Saved place';
   const verb=mode==='move'?'Move':'Add';
@@ -38,12 +40,12 @@ export default function AddToTripDialog({place, days, places, initialDayIndex, o
     <div className="planner-add-place"><span className="planner-add-place-icon"><MapPin size={19}/></span><div><span>{mode==='move'?'A different spot in your plans':'Make room for a favourite'}</span><strong>{place.name}</strong>{place.area&&<p>{place.area}</p>}</div></div>
     <div className="planner-add-fields">
       <label htmlFor={`${id}-day`}>Choose a day<select id={`${id}-day`} value={safeDayIndex} disabled={!days.length} onChange={event=>{const next=Number(event.target.value);setDayIndex(next);setPosition('end');onDayChange?.(next);}}>{days.map((candidate,candidateIndex)=><option key={candidate.id} value={candidateIndex}>{candidate.label} · {candidate.date}</option>)}</select></label>
-      <label htmlFor={`${id}-position`}>Position in the day<select id={`${id}-position`} value={position} disabled={!day||loading} onChange={event=>setPosition(event.target.value)}><option value="end">End of day</option><option value="start">Start of day</option>{items.map(item=><option key={item.aid} value={`after:${item.aid}`}>After {nameOf(item.placeId)}</option>)}</select></label>
+      <label htmlFor={`${id}-position`}>Position in the day<select id={`${id}-position`} value={position} disabled={!day||loading} onChange={event=>setPosition(event.target.value)}><option value="end">{directFlight?'After landing':'End of day'}</option>{!directFlight&&<option value="start">{firstFlight?'After the starting flight':'Start of day'}</option>}{items.filter(item=>item!==firstFlight).map(item=><option key={item.aid} value={`after:${item.aid}`}>After {nameOf(item.placeId)}</option>)}</select></label>
     </div>
     {day?<section className="planner-add-preview" aria-label="Selected day preview" aria-live="polite">
       <div className="planner-add-day"><CalendarDays size={16}/><div><strong>{day.label} · {day.date}</strong><span>{day.title}</span></div><small>{items.length} {items.length===1?'stop':'stops'}</small></div>
       {loading?<p className="planner-add-loading" role="status">Loading this day’s places…</p>:<ol className="planner-add-sequence">
-        <li className="planner-add-neighbour"><span className="planner-add-dot"/><span>{before?nameOf(before.placeId):'Start of day'}</span></li>
+        <li className="planner-add-neighbour"><span className="planner-add-dot"/><span>{before?nameOf(before.placeId):directFlight?`Land at ${nameOf(day.endPlaceId||'hotel')}`:'Start of day'}</span></li>
         <li className="planner-add-insert"><span className="planner-add-dot"><Plus size={11}/></span><span><strong>{place.name}</strong><small>Stop {index+1} of {items.length+1}</small></span></li>
         <li className="planner-add-neighbour"><span className="planner-add-dot"/><span>{after?nameOf(after.placeId):'End of day'}</span></li>
       </ol>}

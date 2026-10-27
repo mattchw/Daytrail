@@ -29,8 +29,8 @@ await check('split opening periods cannot be added together to fit a single visi
   const split = schedule([period(1, 9, 12), period(1, 14, 17)]);
   assert.equal(checkVisitHours(info({ currentHours: split }), visit(11 * 60, 15 * 60)).status, 'short');
   assert.equal(checkVisitHours(info({ currentHours: split }), visit(11 * 60, 15 * 60)).suggestedStart, undefined);
-  assert.equal(checkVisitHours(info({ currentHours: split }), visit(13 * 60, 14 * 60)).status, 'closed');
-  assert.equal(checkVisitHours(info({ currentHours: split }), visit(13 * 60, 14 * 60)).suggestedStart, 11 * 60);
+  assert.equal(checkVisitHours(info({ currentHours: split }), visit(13 * 60, 14 * 60)).status, 'fits');
+  assert.equal(checkVisitHours(info({ currentHours: split }), visit(13 * 60, 14 * 60)).waitMinutes, 60);
 });
 await check('adjacent or overlapping periods merge without false conflicts', () => {
   const adjacent = schedule([period(1, 9, 12), period(1, 12, 17), period(1, 13, 18)]);

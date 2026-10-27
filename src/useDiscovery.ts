@@ -34,6 +34,7 @@ export function useDiscovery(tripId: string, destination: string) {
 
   const runSearch = useCallback(async (input: SearchInput) => {
     const version = ++searchVersion.current;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) { setLoading(false);setError('Live search needs a connection. Choose from your saved Ideas.');return; }
     detailVersion.current += 1;
     const submitted = { ...input, bounds: input.bounds ? { ...input.bounds } : undefined };
     lastSearch.current = submitted;
@@ -56,7 +57,7 @@ export function useDiscovery(tripId: string, destination: string) {
   const select = useCallback(async (result: DiscoveryResult) => {
     const version = ++detailVersion.current;
     setSelectedResult(result); setDetailsError('');
-    if (!result.place.googlePlaceId) { setDetailsLoading(false); return; }
+    if (!result.place.googlePlaceId || (typeof navigator !== 'undefined' && !navigator.onLine)) { setDetailsLoading(false); return; }
     setDetailsLoading(true);
     try {
       const detail = await fetchDiscoveryDetails(result.place.googlePlaceId);
@@ -79,6 +80,7 @@ export function useDiscovery(tripId: string, destination: string) {
     query, setQuery, category, results, selectedResult, scope, loading, error, searched,
     detailsLoading, detailsError, resultsKey, scrollTop, setScrollTop, select, back,
     search: () => runSearch({ query, category, bounds: bounds.current }),
+    indoorIdeas: () => {setQuery('');setCategory('indoor');return runSearch({query:'',category:'indoor',bounds:bounds.current});},
     changeCategory: (next: DiscoveryCategory) => { setCategory(next); return runSearch({ query, category: next, bounds: bounds.current }); },
     searchArea: (area: SearchBounds) => runSearch({ query, category, bounds: area }),
     backToDestination: () => runSearch({ query, category }),

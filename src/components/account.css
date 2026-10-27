@@ -1,0 +1,45 @@
+.dt-account-button { position:relative; display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid #d9d1c3; background:var(--paper); border-radius:10px; padding:7px 11px; min-height:36px; flex-shrink:0; font-size:12px; font-weight:650; }
+.dt-account-button:hover { background:#edf3ed; border-color:#a7bbae; }
+.dt-account-button.is-connected { padding:4px 10px 4px 5px; }
+.dt-account-initials { display:grid; place-items:center; width:27px; height:27px; background:#ddeeea; color:#0e6e68; border-radius:50%; font-size:10px; }
+.dt-account-attention { width:6px; height:6px; background:#b47325; border-radius:50%; position:absolute; top:5px; right:5px; }
+.dt-dash-account { margin-left:auto; }
+.dt-account-panel { padding:2px 0 0; }
+.dt-account-intro { text-align:center; padding:8px 6px 22px; }
+.dt-account-hero-icon { display:grid; place-items:center; margin:0 auto 17px; background:#e5eee4; color:#0e6e68; width:62px; height:62px; border:1px solid #d1dfcf; border-radius:20px; }
+.dt-account-eyebrow { font-size:10px!important; font-weight:700; letter-spacing:1.8px; color:var(--teal)!important; margin-bottom:8px; }
+.dt-account-intro h3 { font-size:25px; font-weight:650; line-height:1.2; letter-spacing:-.6px; margin-bottom:11px; overflow-wrap:anywhere; }
+.dt-account-intro>p:last-child { font-size:13px; color:var(--muted); line-height:1.6; max-width:310px; margin:auto; }
+.dt-google-button { display:flex; justify-content:center; align-items:center; gap:11px; min-height:46px; width:100%; background:#fff; border:1px solid #c9cec8; color:#1f1f1f; border-radius:9px; font-weight:600; font-size:14px; padding:10px 16px; }
+.dt-google-button:hover:not(:disabled) { background:#f7f9f8; border-color:#82998c; }
+.dt-account-device { display:flex; gap:12px; align-items:flex-start; background:#f1ede4; border:1px solid #e5ddcf; border-radius:12px; padding:15px; margin-top:18px; }
+.dt-account-device>svg { color:#5c796a; margin-top:2px; flex-shrink:0; }
+.dt-account-device strong { font-size:12px; font-weight:700; }
+.dt-account-device p { color:#687064; font-size:12px; line-height:1.6; margin-top:5px; }
+.dt-account-identity { display:flex; align-items:center; gap:12px; border:1px solid #d7e2d5; background:#f4f8f1; border-radius:12px; padding:14px; }
+.dt-account-identity>div { flex:1; min-width:0; }
+.dt-account-identity strong,.dt-account-identity>div>span { display:block; overflow-wrap:anywhere; }
+.dt-account-identity strong { font-size:13px; }
+.dt-account-identity>div>span { font-size:11px; color:var(--muted); margin-top:3px; }
+.dt-account-connected { font-size:10px; color:var(--teal); background:#e1eee0; border-radius:99px; padding:4px 7px; }
+.dt-account-backup { display:flex; align-items:center; gap:11px; background:none; border:0; border-bottom:1px solid var(--border); width:100%; text-align:left; padding:20px 2px; color:var(--teal); }
+.dt-account-backup>span { flex:1; min-width:0; }
+.dt-account-backup strong { display:block; font-size:13px; font-weight:650; }
+.dt-account-backup small { display:block; font-size:11px; color:var(--muted); line-height:1.5; margin-top:4px; }
+.dt-account-footer { padding-top:18px; text-align:center; }
+.dt-account-footer>p { font-size:10px; line-height:1.6; color:#7b8075; margin:12px 8px 0; }
+.dt-account-footer a { color:#5a7263; text-underline-offset:2px; }
+.dt-auth-error { display:flex; align-items:center; gap:8px; background:#fbecdf; color:#7b411c; border:1px solid #ebd0b6; border-radius:10px; padding:10px 8px 10px 12px; margin-bottom:15px; }
+.dt-auth-error>p { font-size:12px; line-height:1.6; flex:1; }
+.dt-auth-error>button { flex-shrink:0; }
+.dt-auth-unavailable { color:var(--muted); font-size:12px; line-height:1.6; padding:10px 2px 0; }
+.dt-auth-unavailable details { margin-top:8px; font-size:11px; }
+.dt-auth-unavailable summary { cursor:pointer; color:var(--teal); }
+.dt-auth-unavailable details p { margin-top:7px; overflow-wrap:anywhere; }
+.dt-auth-loading { display:flex; justify-content:center; gap:9px; flex-wrap:wrap; align-items:center; padding:12px; color:var(--muted); font-size:13px; }
+.dt-auth-loading .text-button { flex-basis:100%; }
+.dt-auth-spinner { animation:dt-auth-spin 1s linear infinite; }
+@keyframes dt-auth-spin { to { transform:rotate(360deg); } }
+@media (max-width:1250px) and (min-width:761px) { .workspace-tools .dt-account-button-label { display:none; } .workspace-tools .dt-account-button { width:36px; padding:4px; } }
+@media (max-width:760px) { .workspace-tools .dt-account-button-label { display:none; } .workspace-tools .dt-account-button { width:36px; padding:4px; } .dt-dash-account .dt-account-button { font-size:12px; } .dt-account-intro { padding-top:3px; padding-bottom:18px; } .dt-account-intro h3 { font-size:23px; } .dt-account-connected { display:none; } }
+@media (prefers-reduced-motion:reduce) { .dt-auth-spinner { animation:none; } }

@@ -73,14 +73,14 @@ export function createImproveMatrixService(load = loadGoogleMaps, now = Date.now
   const enqueue = createImproveTaskPool(2);
   return async (input: ImproveInput, current: () => boolean = () => true): Promise<ImproveMatrix> => {
     assertCurrent(current);
-    if (input.day.items.length > 8 || input.day.endMode === 'transit'
+    if (input.day.items.length > 8 || input.day.endMode === 'transit' || input.day.endMode === 'flight'
       || input.day.items.some(item => item.mode !== input.day.endMode)) {
       throw new ImproveRunError('Compare up to 8 stops using only walking or only driving.');
     }
     const mode = input.day.endMode;
-    const ids = [...new Set([input.day.startPlaceId ?? 'hotel', 'hotel', ...input.day.items.map(item => item.placeId)])].sort();
+    const ids = [...new Set([input.day.startPlaceId ?? 'hotel', input.day.endPlaceId ?? 'hotel', ...input.day.items.map(item => item.placeId)])].sort();
     const points = ids.map(id => input.places[id]);
-    if (points.some(place => !hasCoordinates(place))) throw new ImproveRunError('Choose a mapped location for every stop, departure and return.');
+    if (points.some(place => !hasCoordinates(place))) throw new ImproveRunError('Choose a mapped location for every stop and the day’s start and end.');
     // A provider ID and coincident coordinates use the same zero-journey rule as computeJourney.
     const groups: { point: Place; indices: number[] }[] = [];
     points.forEach((point, index) => {
@@ -174,14 +174,18 @@ export async function runImproveDay(
   const byProvider = new Map<string, string[]>();
   for (const id of ids) {
     const providerId = input.places[id]?.googlePlaceId;
+    // A failed provider refresh must not discard a traveller-confirmed cutoff.
+    if (initial.hours[id]?.lastEntryMinutes) input.hours[id] = { fetchedAt: 0, lastEntryMinutes: initial.hours[id]!.lastEntryMinutes };
     if (providerId) byProvider.set(providerId, [...byProvider.get(providerId) ?? [], id]);
+    else if (initial.hours[id]) input.hours[id] = initial.hours[id];
   }
   await Promise.all([...byProvider].map(([providerId, placeIds]) => hoursQueue(async () => {
     assertCurrent(current);
     try {
       const info = await (dependencies.fetchHours ?? fetchVisitOpeningInfo)(providerId);
       assertCurrent(current);
-      for (const id of placeIds) input.hours[id] = info;
+      for (const id of placeIds) input.hours[id] = initial.hours[id]?.lastEntryMinutes
+        ? { ...info, lastEntryMinutes: initial.hours[id]!.lastEntryMinutes } : info;
     } catch (error) {
       assertCurrent(current);
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
@@ -199,11 +203,11 @@ export async function runImproveDay(
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new ImproveRunError('A current journey could not be compared. Check its map location or retry.');
   }
-  if (!candidates.length) return { phase: 'none', message: 'No order saves at least 5 minutes while protecting bookings, known opening hours and your return time.' };
+  if (!candidates.length) return { phase: 'none', message: 'No order saves at least 5 minutes while protecting bookings, known opening hours and your finish time.' };
   onProgress('verifying');
   const journey = dependencies.journey ?? computeJourney;
   const verify = async (day = input.day) => {
-    const legs = await calculateDayRoutes({ date: input.date, timezone: input.timezone, day, places: input.places }, undefined, current,
+    const legs = await calculateDayRoutes({ date: input.date, timezone: input.timezone, day, places: input.places, hours: input.hours }, undefined, current,
       (from, to, mode, departure) => verifyQueue(() => { assertCurrent(current); return journey(from, to, mode, departure); }, current));
     assertCurrent(current);
     return { legs, evaluation: evaluateOrder(input, day.items, legs) };

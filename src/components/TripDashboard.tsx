@@ -1,12 +1,18 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type ReactNode, type FormEvent } from 'react';
 import { ArrowRight, CalendarDays, Check, Compass, Copy, MapPin, Plus, Route, Trash2, X } from 'lucide-react';
 import type { Trip } from '../model';
 import './dashboard.css';
 
 type Props = {
   trips: Trip[];
+  accountControl: ReactNode;
+  libraryControl?: ReactNode;
+  sharedControl?: ReactNode;
+  storageLabel?: string;
+  loading?: boolean;
+  onEditing?: (editing: boolean) => void;
   onOpen: (id: string) => void;
-  onCreate: (name: string, destination: string, startDate: string, days: number, timezone: string) => void;
+  onCreate: (name: string, destination: string, startDate: string, days: number, timezone: string) => Promise<boolean>;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
 };
@@ -67,7 +73,7 @@ function JourneyIllustration({ variant = 0 }: { variant?: number }) {
   );
 }
 
-export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, onDelete }: Props) {
+export default function TripDashboard({ accountControl, libraryControl, sharedControl, storageLabel='On this device', loading=false, onEditing, trips, onOpen, onCreate, onDuplicate, onDelete }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const destinationInput = useRef<HTMLInputElement>(null);
@@ -77,9 +83,11 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
   const [days, setDays] = useState('3');
   const [timezone, setTimezone] = useState('');
   const [error, setError] = useState('');
+  const [creating, setCreating] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   function openCreate() {
+    onEditing?.(true);
     setName('');
     setDestination('');
     setStartDate(today());
@@ -89,8 +97,9 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
     dialog.current?.showModal();
   }
 
-  function createTrip(event: FormEvent<HTMLFormElement>) {
+  async function createTrip(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if(creating)return;
     const data = new FormData(event.currentTarget);
     const submittedName = String(data.get('name') ?? '').trim();
     const submittedDestination = String(data.get('destination') ?? '').trim();
@@ -112,8 +121,9 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
     }
     const submittedTimezone=String(data.get('timezone')??'').trim();
     try{new Intl.DateTimeFormat('en',{timeZone:submittedTimezone});}catch{setError('Choose the destination time zone, such as Asia/Tokyo.');return;}
-    onCreate(submittedName, submittedDestination, submittedStartDate, submittedDays, submittedTimezone);
-    dialog.current?.close();
+    setCreating(true);
+    try { if(await onCreate(submittedName, submittedDestination, submittedStartDate, submittedDays, submittedTimezone)) {dialog.current?.close();onEditing?.(false);}else setError('Your trip could not be saved. Your details are still here; please try again.'); }
+    finally {setCreating(false);}
   }
 
   return (
@@ -121,7 +131,7 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
       <header className="dt-dash-header">
         <div className="dt-dash-brand"><span className="dt-dash-brandmark"><Route size={22} aria-hidden="true" /></span><span>Daytrail</span></div>
         <span className="dt-dash-nav" aria-current="page">My trips</span>
-        <div className="dt-dash-person" aria-label="Personal workspace">You</div>
+        <div className="dt-dash-account">{accountControl}</div>
       </header>
 
       <main className="dt-dash-main">
@@ -130,7 +140,7 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
             <p className="dt-dash-eyebrow"><Compass size={15} aria-hidden="true" /> Find your places. Plan your days.</p>
             <h1 id="dt-dash-heading">A little planning.<br />A world to explore.</h1>
             <p className="dt-dash-intro">Your next adventure starts with a few good ideas.<br className="dt-dash-desktop-break" /> Keep them together, then make a day of it.</p>
-            <button className="dt-dash-button dt-dash-primary" onClick={openCreate}><Plus size={18} aria-hidden="true" /> Plan a new trip</button>
+            <button className="dt-dash-button dt-dash-primary" disabled={loading} onClick={openCreate}><Plus size={18} aria-hidden="true" /> Plan a new trip</button>
           </div>
           <div className="dt-dash-welcome-art" aria-hidden="true">
             <div className="dt-dash-art-halo" />
@@ -144,7 +154,8 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
         </section>
 
         <section aria-labelledby="dt-dash-trips-heading" className="dt-dash-trips">
-          <div className="dt-dash-section-heading"><div><h2 id="dt-dash-trips-heading">Your trips <span>{trips.length}</span></h2><p>A home for every adventure, big or small.</p></div><span className="dt-dash-device"><Check size={14} aria-hidden="true" /> On this device</span></div>
+          {libraryControl}
+          <div className="dt-dash-section-heading"><div><h2 id="dt-dash-trips-heading">Your trips <span>{trips.length}</span></h2><p>{loading?'Opening your trip library…':'A home for every adventure, big or small.'}</p></div><span className="dt-dash-device"><Check size={14} aria-hidden="true" /> {storageLabel}</span></div>
           <div className="dt-dash-grid">
             {trips.map((trip, index) => {
               const stops = trip.days.reduce((total, day) => total + day.items.length, 0);
@@ -156,32 +167,33 @@ export default function TripDashboard({ trips, onOpen, onCreate, onDuplicate, on
                   </button>
                   <div className="dt-dash-card-actions">
                     {deleteId === trip.id ? (
-                      <div className="dt-dash-delete-confirm" role="group" aria-label={`Confirm deleting ${trip.name}`}><span>Delete this trip?</span><button onClick={() => setDeleteId(null)}>Keep trip</button><button className="dt-dash-delete-action" onClick={() => { onDelete(trip.id); setDeleteId(null); }}>Delete</button></div>
+                      <div className="dt-dash-delete-confirm" role="group" aria-label={`Move ${trip.name} to Trash`}><span>Move to Trash?</span><button onClick={() => setDeleteId(null)}>Keep trip</button><button className="dt-dash-delete-action" onClick={() => { onDelete(trip.id); setDeleteId(null); }}>Move to Trash</button></div>
                     ) : (
-                      <><button onClick={() => onDuplicate(trip.id)} aria-label={`Duplicate ${trip.name}`}><Copy size={13} aria-hidden="true" />Duplicate</button><button className="dt-dash-delete-trigger" onClick={() => setDeleteId(trip.id)} aria-label={`Delete ${trip.name}`}><Trash2 size={13} aria-hidden="true" />Delete</button></>
+                      <><button onClick={() => onDuplicate(trip.id)} aria-label={`Duplicate ${trip.name}`}><Copy size={13} aria-hidden="true" />Duplicate</button><button className="dt-dash-delete-trigger" onClick={() => setDeleteId(trip.id)} aria-label={`Move ${trip.name} to Trash`}><Trash2 size={13} aria-hidden="true" />Trash</button></>
                     )}
                   </div>
                 </article>
               );
             })}
-            <button className="dt-dash-new-card" onClick={openCreate}><span className="dt-dash-new-icon"><Plus size={24} aria-hidden="true" /></span><strong>{trips.length ? 'Where to next?' : 'Your first adventure awaits'}</strong><span>{trips.length ? 'Start a fresh page in your travel story.' : 'Pick a destination. We’ll make room for the possibilities.'}</span><span className="dt-dash-new-link">Create a trip <ArrowRight size={15} aria-hidden="true" /></span></button>
+            <button className="dt-dash-new-card" disabled={loading} onClick={openCreate}><span className="dt-dash-new-icon"><Plus size={24} aria-hidden="true" /></span><strong>{loading?'Opening your trips…':trips.length ? 'Where to next?' : 'Your first adventure awaits'}</strong><span>{trips.length ? 'Start a fresh page in your travel story.' : 'Pick a destination. We’ll make room for the possibilities.'}</span><span className="dt-dash-new-link">Create a trip <ArrowRight size={15} aria-hidden="true" /></span></button>
           </div>
         </section>
-        <footer className="dt-dash-footer"><span className="dt-dash-footer-dot" /> This is your personal planning space. Trips are stored in this browser.</footer>
+        {sharedControl}
+        <footer className="dt-dash-footer"><span className="dt-dash-footer-dot" /> {storageLabel==='Your account'?'Account trips sync when connected. Your latest edits are saved locally first.':'These trips stay in this browser until you move them to your account.'}</footer>
       </main>
 
-      <dialog ref={dialog} className="dt-dash-dialog" aria-labelledby="dt-dash-create-title" aria-describedby="dt-dash-create-description" onClick={event => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.current?.close(); } }}>
+      <dialog ref={dialog} onClose={()=>onEditing?.(false)} className="dt-dash-dialog" aria-labelledby="dt-dash-create-title" aria-describedby="dt-dash-create-description" onClick={event => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.current?.close(); } }}>
         <form onSubmit={createTrip} className="dt-dash-form">
           <div className="dt-dash-form-heading"><span className="dt-dash-form-icon"><Compass size={24} aria-hidden="true" /></span><button type="button" className="dt-dash-close" aria-label="Close new trip" onClick={() => dialog.current?.close()}><X size={19} aria-hidden="true" /></button></div>
           <h2 id="dt-dash-create-title">Let’s go somewhere.</h2>
-          <p id="dt-dash-create-description">Start with the basics. The good stuff comes next.</p>
+          <p id="dt-dash-create-description">Start with the basics. This trip will be saved {storageLabel==='Your account'?'to your account':'on this device'}.</p>
           <label className="dt-dash-field">Trip name<input ref={nameInput} name="name" value={name} onChange={event => setName(event.target.value)} autoFocus required maxLength={80} placeholder="e.g. Kyoto in spring" autoComplete="off" /></label>
           <label className="dt-dash-field">Destination<input ref={destinationInput} name="destination" value={destination} onChange={event => setDestination(event.target.value)} required maxLength={80} placeholder="e.g. Kyoto, Japan" autoComplete="off" /></label>
           <div className="dt-dash-form-row"><label className="dt-dash-field">Start date<input type="date" name="startDate" value={startDate} onChange={event => setStartDate(event.target.value)} onInput={event => setStartDate(event.currentTarget.value)} required /></label><label className="dt-dash-field">Number of days<input type="number" name="days" aria-label="Number of days" aria-describedby="dt-dash-days-hint" value={days} onChange={event => setDays(event.target.value)} required min="1" max="14" step="1" inputMode="numeric" /><span id="dt-dash-days-hint" className="dt-dash-field-hint">1–14 days</span></label></div>
           <label className="dt-dash-field">Destination time zone<input name="timezone" value={timezone} onChange={event=>setTimezone(event.target.value)} list="create-timezones" placeholder="e.g. Asia/Tokyo" required autoComplete="off"/><datalist id="create-timezones">{['Asia/Tokyo','Europe/London','Europe/Paris','America/New_York','America/Los_Angeles','Asia/Hong_Kong','Asia/Singapore','Australia/Sydney','UTC'].map(zone=><option key={zone} value={zone}/>)}</datalist><span className="dt-dash-field-hint">Transit times use the destination's local time.</span></label>
           {error && <p className="dt-dash-form-error" role="alert">{error}</p>}
           <p className="dt-dash-form-note"><MapPin size={15} aria-hidden="true" /> Search real places with Google Maps, then choose your hotel or starting point.</p>
-          <div className="dt-dash-form-actions"><button type="button" className="dt-dash-button dt-dash-secondary" onClick={() => dialog.current?.close()}>Cancel</button><button type="submit" className="dt-dash-button dt-dash-primary">Create trip <ArrowRight size={16} aria-hidden="true" /></button></div>
+          <div className="dt-dash-form-actions"><button type="button" className="dt-dash-button dt-dash-secondary" onClick={() => dialog.current?.close()}>Cancel</button><button type="submit" disabled={creating} className="dt-dash-button dt-dash-primary">{creating?'Saving…':'Create trip'} <ArrowRight size={16} aria-hidden="true" /></button></div>
         </form>
       </dialog>
     </div>
