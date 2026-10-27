@@ -229,4 +229,74 @@ await check('an unconfirmed same-airport origin cannot retain a previous flight 
   const options=fixture(),runtime={...today.initialTodayRuntime(options),leaveAt:at('10:00')};
   const projection=today.buildTodayProjection({...options,runtime});assert.equal(projection.stale,true);assert.equal(projection.leaveAt,null);
 });
+
+function withFree(untilBooking=true,duration=60){
+  const options=fixture();options.trip.days[0].items[0].freeTime={id:'f-a',kind:'explore',duration,untilBooking};
+  options.schedule=model.schedule(options.trip.days[0],options.places,Object.fromEntries(['a','b','c','return'].map(key=>[key,{mode:'walk',min:10,km:'1',status:'ready'}])),{trip:options.trip,dayIndex:0});return options;
+}
+await check('free time has separate progress identity at the previous stop, no additional journey or hours',()=>{
+  const options=withFree(false,30),projection=today.buildTodayProjection(options),row=projection.rows.find(row=>row.target.kind==='free');
+  assert.equal(row.target.id,'free:f-a');assert.equal(row.target.placeId,'a');assert.equal(row.leg.min,0);assert.equal(row.hours,undefined);assert.equal(row.target.activity,undefined);assert.equal(minute(row.start),'10:10');assert.equal(minute(row.end),'10:40');
+});
+await check('until-booking block absorbs lateness before the booking becomes late',()=>{
+  const options=withFree(),runtime=visitRuntime(options);
+  const early=today.buildTodayProjection({...options,runtime,now:at('10:00')}),late=today.buildTodayProjection({...options,runtime,now:at('11:20')}),tooLate=today.buildTodayProjection({...options,runtime,now:at('12:00')});
+  assert.equal(early.booking.freeMinutes,95);assert.equal(late.booking.freeMinutes,30);assert.equal(late.booking.lateMinutes,0);assert.equal(tooLate.booking.freeMinutes,0);assert.equal(tooLate.booking.lateMinutes,10);assert.equal(tooLate.next.target.id,'activity:b');
+});
+await check('leaving a stop starts free time directly without an arrival or directions step',()=>{
+  const options={...withFree(),now:at('10:15')};options.runtime=visitRuntime(options);
+  const projection=today.buildTodayProjection(options),result=actions.planTodayAction(options,projection,'leave');
+  assert.equal(result.mark.targetId,'activity:a');assert.equal(result.runtime.phase,'visit');assert.equal(result.runtime.targetId,'free:f-a');assert.equal(result.runtime.placeId,'a');
+  const during={...options,runtime:result.runtime,marks:{'activity:a':'done'},now:at('11:25')},live=today.buildTodayProjection(during);
+  assert.equal(live.stale,false);assert.equal(live.current.target.id,'free:f-a');assert.equal(live.leaveInMinutes,25);assert.equal(minute(live.leaveAt),'11:50');assert.equal(live.current.freeBookingName,'B');assert.equal(live.current.freeDeltaMinutes,-5,'elapsed time does not count as extra shrinkage');
+  const done=actions.planTodayAction(during,live,'leave');assert.equal(done.mark.targetId,'free:f-a');assert.equal(done.runtime.phase,'travel');assert.equal(done.runtime.targetId,'activity:b');
+});
+await check('zero-minute free time is bypassed in the same durable Today transition and survives reload',()=>{
+  const options={...withFree(),now:at('12:00')};options.runtime=visitRuntime(options);
+  const result=actions.planTodayAction(options,today.buildTodayProjection(options),'leave');
+  assert.equal(result.runtime.targetId,'activity:b');assert.deepEqual(result.runtime.bypassedFreeIds,['free:f-a']);
+  const next=today.buildTodayProjection({...options,runtime:result.runtime,marks:{'activity:a':'done'}});assert.equal(next.stale,false);assert.equal(next.phase,'travel');assert.equal(next.next.target.id,'activity:b');assert.equal(next.rows.find(row=>row.target.kind==='free').mark,'skipped');
+});
+await check('skipping a stop bypasses its attached block and does not move the known origin',()=>{
+  const options={...withFree(),marks:{'activity:a':'skipped'}};const projection=today.buildTodayProjection(options);
+  assert.equal(projection.originPlaceId,'hotel');assert.equal(projection.next.target.id,'activity:b');assert.equal(projection.rows.find(row=>row.target.kind==='free').mark,'skipped');assert.equal(projection.next.arrival,null);
+});
+await check('remaining routes never request a fake journey into free time',async()=>{
+  const options=withFree(),seen=[];
+  await routes.calculateTodayRemainingRoutes(options,()=>true,async(from,to,mode)=>{seen.push([from.id,to.id,mode]);return {mode,min:10,km:'1',status:'ready'};});
+  assert.ok(!seen.some(([from,to])=>from===to));
+});
+await check('unknown onward journey never claims an until-booking block fits',()=>{
+  const options=withFree();options.schedule.rows[1].leg={mode:'walk',min:null,km:'—',status:'unavailable'};
+  const projection=today.buildTodayProjection(options),free=projection.rows.find(row=>row.target.kind==='free');assert.equal(projection.booking.slackMinutes,null);assert.equal(free.freeMinutes,60);assert.equal(free.approx,true);assert.match(free.freeWarning,/Confirm/);
+});
+await check('until-booking allocation cannot make an intermediate visit miss closing time',()=>{
+  const options=withFree();options.trip.days[0].items[1].fixed=null;options.trip.days[0].items[2].fixed=840;
+  options.hoursByPlace={b:{fetchedAt:at('08:00'),regularHours:{periods:[{open:{day:2,hour:9,minute:0},close:{day:2,hour:12,minute:0}}],weekdayDescriptions:[]}}};
+  const projection=today.buildTodayProjection(options),free=projection.rows.find(row=>row.target.kind==='free'),b=projection.rows.find(row=>row.target.id==='activity:b');
+  assert.equal(minute(b.end),'12:00');assert.equal(free.freeMinutes,40);assert.notEqual(b.hours.status,'short');assert.equal(projection.booking.lateMinutes,0);
+});
+await check('multiple until blocks share the same booking slack without doubling available time',()=>{
+  const options=withFree();options.trip.days[0].items[1].fixed=null;options.trip.days[0].items[1].freeTime={id:'f-b',kind:'rest',duration:30,untilBooking:true};options.trip.days[0].items[2].fixed=840;
+  const projection=today.buildTodayProjection(options),free=projection.rows.filter(row=>row.target.kind==='free');assert.equal(free.length,2);assert.equal(free[1].freeMinutes,0);assert.equal(projection.booking.lateMinutes,0);assert.equal(minute(projection.rows.find(row=>row.target.id==='activity:c').arrival),'14:00');
+});
+await check('fix previews report recovered free time and never shorten a block as a location visit',()=>{
+  const options={...withFree(),now:at('11:45')};options.runtime=visitRuntime(options,{leaveAt:at('12:00')});const fixes=today.buildTodayFixes(options);
+  assert.match(fixes.find(fix=>fix.id==='leave-now').outcome,/On time for B · 5 min of free time left/);assert.ok(!fixes.some(fix=>fix.id.includes('f-a')));
+});
+await check('completed days retain zero-time bypasses without resuming a consumed block',()=>{
+  const options={...withFree(),now:at('15:00'),marks:{'activity:a':'done','activity:b':'done','activity:c':'done','end:day':'done'}};
+  const day=options.trip.days[0];delete options.marks['end:day'];options.marks[`end:${day.id}`]='done';
+  options.runtime={...today.initialTodayRuntime(options),phase:'complete',targetId:null,placeId:'hotel',leaveAt:null,bypassedFreeIds:['free:f-a']};
+  const projection=today.buildTodayProjection(options);assert.equal(projection.phase,'complete');assert.equal(projection.stale,false);assert.equal(projection.next,null);
+});
+await check('stale runtime cannot keep a block bypassed after its active place changed',()=>{
+  const options={...withFree(),now:at('12:00'),marks:{'activity:a':'done'}};
+  options.runtime={...today.initialTodayRuntime(options),phase:'visit',targetId:'activity:c',placeId:'c',leaveAt:at('13:00'),bypassedFreeIds:['free:f-a']};
+  const projection=today.buildTodayProjection(options);assert.equal(projection.stale,true);assert.equal(projection.rows.find(row=>row.target.kind==='free').mark,'planned');
+});
+await check('an earlier late booking does not consume free time before a later booking',()=>{
+  const options=withFree();options.trip.days[0].items[0].fixed=540;const projection=today.buildTodayProjection(options);
+  assert.equal(projection.rows[0].lateMinutes,10);assert.equal(projection.rows.find(row=>row.target.kind==='free').freeMinutes,100);assert.equal(projection.rows.find(row=>row.target.id==='activity:b').lateMinutes,0);
+});
 console.log(`${count} Today engine checks passed.`);

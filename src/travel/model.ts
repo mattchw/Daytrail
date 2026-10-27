@@ -4,12 +4,15 @@ export type TravelMark = 'planned' | 'done' | 'skipped';
 export type TravelMarks = Readonly<Record<string, TravelMark>>;
 export interface TravelTarget {
   id: string;
-  kind: 'activity' | 'end' | 'flight';
+  kind: 'activity' | 'end' | 'flight' | 'free';
   dayId: string;
   placeId: string;
   mode: Mode;
   activity?: Activity;
   flight?: FlightSegment;
+  freeTime?: NonNullable<Activity['freeTime']>;
+  anchorActivityId?: string;
+  anchorTargetId?: string;
 }
 
 /** Visits and flights keep separate stable identities, including arrival-day views. */
@@ -36,10 +39,12 @@ export function travelTargets(day: Day, trip?: Pick<Trip, 'startDate' | 'days' |
   }
   for (const activity of day.items) {
     const hasFlight = activity.mode === 'flight' && appendFlight(activity.flightId);
-    if (hasFlight && activity.duration === 0) continue;
+    if (!(hasFlight && activity.duration === 0)) {
     append({id:`activity:${activity.aid}`,kind:'activity',dayId:day.id,placeId:activity.placeId,
       // A visit after landing is at the airport; it must never generate a flight directions URL.
       mode:activity.mode === 'flight' ? 'walk' : activity.mode,activity});
+    }
+    if (activity.freeTime) append({id:`free:${activity.freeTime.id}`,kind:'free',dayId:day.id,placeId:activity.placeId,mode:'walk',freeTime:activity.freeTime,anchorActivityId:activity.aid,anchorTargetId:hasFlight&&activity.duration===0?`flight:${activity.flightId}`:`activity:${activity.aid}`});
   }
   if (day.endMode === 'flight' && appendFlight(day.endFlightId)) return targets;
   if (day.items.length || (day.startPlaceId ?? 'hotel') !== (day.endPlaceId ?? 'hotel')) {

@@ -9,14 +9,16 @@ export function planTodayAction(options:Pick<TodayOptions,'trip'|'dayIndex'|'pla
   if(!projection.canAct)throw new Error('Open the current trip day to record live progress.');
   if(projection.signature!==signature)throw new Error('The itinerary changed. Review the updated day before continuing.');
   if(projection.stateSignature!==todayStateSignature(options))throw new Error('Your progress changed. Review the current stop before continuing.');
-  const existing=options.runtime??null,prior=existing&&runtimeMatches(existing,options)?existing:initialTodayRuntime(options);
+  const existing=options.runtime??null,prior=existing&&runtimeMatches(existing,options)?existing:initialTodayRuntime({...options,runtime:null});
   let runtime:TodayRuntime,mark:TodayActionResult['mark'];
   if(kind==='extend'){
-    if(projection.phase!=='visit'||!projection.current||!Number.isInteger(minutes)||minutes<1||minutes>120)throw new Error('Record your arrival at a stop before extending the visit.');
+    if(projection.phase!=='visit'||!projection.current||projection.current.target.kind==='free'||!Number.isInteger(minutes)||minutes<1||minutes>120)throw new Error('Record your arrival at a stop before extending the visit.');
     runtime={...prior,leaveAt:Math.max(now,projection.leaveAt??now)+minutes*60000,updatedAt:now};
   }else if(kind==='arrive'){
     const next=projection.next;if(!next||projection.phase==='visit')throw new Error('Choose the next journey before recording an arrival.');
-    if(next.target.kind==='activity'){
+    if(next.target.kind==='free'){
+      runtime={...prior,phase:'visit',targetId:next.target.id,placeId:next.target.placeId,since:now,leaveAt:now+(next.freeMinutes??next.target.freeTime?.duration??0)*60000,updatedAt:now,originArrivedAt:now};
+    }else if(next.target.kind==='activity'){
       const fixed=next.target.activity?.fixed,day=options.trip.days[options.dayIndex];
       let start=fixed===null||fixed===undefined?now:Math.max(now,instantAtDayMinutes(bookingDayDate(options.trip,options.dayIndex),fixed,dayTimezone(options.trip,day))??now);
       if(fixed===null&&options.hoursByPlace){
@@ -34,7 +36,9 @@ export function planTodayAction(options:Pick<TodayOptions,'trip'|'dayIndex'|'pla
     if(projection.phase==='travel'||projection.phase==='complete')throw new Error('This journey has already started.');
     if(projection.current)mark={targetId:projection.current.target.id,previous:targetState(options.marks,projection.current.target.id),expected:'done'};
     const next=projection.next;
-    runtime={...prior,phase:next?'travel':'complete',targetId:next?.target.id??null,placeId:projection.current?.target.placeId??prior.placeId,since:now,leaveAt:null,updatedAt:now,originArrivedAt:projection.current?.arrival??prior.originArrivedAt??prior.since};
+    const beforeNext=next?projection.rows.slice(0,projection.rows.indexOf(next)):projection.rows;
+    const bypassedFreeIds=[...new Set([...(prior.bypassedFreeIds??[]),...beforeNext.filter(row=>row.target.kind==='free'&&row!==projection.current&&row.mark==='planned'&&row.freeMinutes===0).map(row=>row.target.id)])];
+    runtime={...prior,phase:next?.target.kind==='free'?'visit':next?'travel':'complete',targetId:next?.target.id??null,placeId:projection.current?.target.placeId??prior.placeId,since:now,leaveAt:next?.target.kind==='free'?now+(next.freeMinutes??0)*60000:null,updatedAt:now,originArrivedAt:projection.current?.arrival??prior.originArrivedAt??prior.since,...(bypassedFreeIds.length?{bypassedFreeIds}:{})};
   }
   return {runtime,mark,previous:existing,signature};
 }

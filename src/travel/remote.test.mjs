@@ -28,7 +28,7 @@ let checks=0;
 async function check(label,action){await action();checks++;console.log(`✓ ${label}`);}
 
 await check('target validation admits activity, end and stable flight identities',()=>{
-  for(const target of ['activity:a1','end:day-30','activity:legacy_id','flight:flight-one'])assert.equal(validTravelTarget(target),true,target);
+  for(const target of ['activity:a1','end:day-30','activity:legacy_id','flight:flight-one','free:free-one'])assert.equal(validTravelTarget(target),true,target);
   for(const target of ['activity','end:','start:d1','activity:a:1','activity:constructor','activity:__proto__','end:'+ 'x'.repeat(101),null])assert.equal(validTravelTarget(target),false,String(target));
 });
 await check('list uses owner-guarded RPC and retains planned and old-location marks',async()=>{

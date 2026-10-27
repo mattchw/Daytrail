@@ -63,6 +63,33 @@ await check('directed routes choose the real cheaper order without mutating the 
   assert.equal(candidates[0].legs.a, data.b.a);
   assert.equal(JSON.stringify(input), before);
 });
+await check('an attached free block follows its stop through comparison and Apply without adding a stop or route', async () => {
+  const {input,data}=simple();input.day.items[0].freeTime={id:'free-a',kind:'explore',duration:60,untilBooking:false};
+  const [candidate]=await searchOrders(input,data);assert.deepEqual(candidate.order,['b','a','c']);assert.equal(candidate.evaluation.schedule.rows.length,3);
+  const row=candidate.evaluation.schedule.rows.find(row=>row.it.aid==='a');assert.equal(row.freeTime.duration,60);assert.equal(row.freeTime.start,row.physicalEnd);
+  assert.equal(candidate.evaluation.schedule.rows[2].start,row.freeTime.end+data.a.c.min);assert.equal(candidate.evaluation.schedule.travel,35);
+  const applied=applyOrder(input.day,candidate.order);assert.equal(applied.items[1].freeTime,input.day.items[0].freeTime);
+});
+await check('free time remains outside venue hours while protecting downstream bookings', () => {
+  const input=fixture(['a','b']);input.day.items[0].duration=30;input.day.items[0].freeTime={id:'free-a',kind:'explore',duration:60,untilBooking:false};input.day.items[1].fixed=600;
+  input.hours.a=hours([{open:point(1,9),close:point(1,9,30)}]);
+  const result=evaluateOrder(input,input.day.items,orderedLegs(input.day.items));assert.equal(result.checks.a.status,'fits');assert.equal(result.schedule.rows[1].late,30);assert.equal(result.feasible,false);
+  input.day.items[0].freeTime.untilBooking=true;const buffered=evaluateOrder(input,input.day.items,orderedLegs(input.day.items));assert.equal(buffered.schedule.rows[0].freeTime.duration,30);assert.equal(buffered.schedule.rows[1].late,0);assert.equal(buffered.feasible,true);
+});
+await check('until-booking allocation cannot replace known visit hours with unknown next-day hours', () => {
+  const input=fixture(['a','b','c']);input.day.startTime=1320;input.day.items[0].freeTime={id:'free-a',kind:'explore',duration:60,untilBooking:true};input.day.items[2].fixed=2040;
+  input.hours.b={fetchedAt:Date.parse('2026-10-20T00:00:00Z'),utcOffsetMinutes:0,currentHours:{periods:[{open:point(0,0)}],weekdayDescriptions:[]}};
+  const result=evaluateOrder(input,input.day.items,orderedLegs(input.day.items));assert.equal(result.schedule.rows[0].freeTime.duration,100);assert.equal(result.checks.b.status,'fits');
+});
+await check('until-booking allocation does not push an already missed admission later', () => {
+  const input=fixture(['a','b','c']);input.day.startTime=990;input.day.items[0].freeTime={id:'free-a',kind:'explore',duration:60,untilBooking:true};input.day.items[2].fixed=1200;
+  input.hours.b=hours([period(1,9,22)],{lastEntryMinutes:{1:990}});
+  const result=evaluateOrder(input,input.day.items,orderedLegs(input.day.items));assert.equal(result.schedule.rows[0].freeTime.duration,0);assert.equal(result.schedule.rows[1].start,1000);
+});
+await check('past lateness at the preceding stop does not erase spare time before a later booking', () => {
+  const input=fixture(['a','b']);input.day.items[0].fixed=540;input.day.items[0].duration=60;input.day.items[0].freeTime={id:'free-a',kind:'rest',duration:60,untilBooking:true};input.day.items[1].fixed=720;
+  const result=evaluateOrder(input,input.day.items,orderedLegs(input.day.items,15));assert.equal(result.schedule.rows[0].late,15);assert.equal(result.schedule.rows[0].freeTime.duration,90);assert.equal(result.schedule.rows[1].late,0);
+});
 await check('a distinct departure is used while the return remains the hotel', async () => {
   const { input, data } = simple();
   input.day.startPlaceId = 'start';
@@ -292,6 +319,10 @@ await check('Apply resolves current objects, preserves note edits and refuses st
   assert.throws(() => applyOrder(input.day, ['b', 'a', 'missing']), /day changed/);
   input.day.items[0].fixed = 600;
   assert.throws(() => applyOrder(input.day, ['b', 'a', 'c']), /booking cannot change position/);
+});
+await check('free time settings participate in comparison signatures', () => {
+  const {input}=simple(),before=signature(input);input.day.items[0].freeTime={id:'free-a',kind:'explore',duration:60,untilBooking:false};const withFree=signature(input);assert.notEqual(withFree,before);
+  for(const [key,value] of [['id','free-b'],['kind','rest'],['duration',75],['untilBooking',true]]){const changed=structuredClone(input);changed.day.items[0].freeTime[key]=value;assert.notEqual(signature(changed),withFree);}
 });
 await check('eight-stop enumeration yields so cancellation stops work before a result', async () => {
   const input = fixture(Array.from({ length: 8 }, (_, index) => `a${index}`));

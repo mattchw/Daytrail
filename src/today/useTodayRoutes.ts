@@ -32,7 +32,7 @@ export function todayRouteRequests(options:TodayOptions,projection:TodayProjecti
   const next=projection.next,from=projection.current?.target.placeId??projection.originPlaceId;
   const dayStart=instantAtDayMinutes(projection.date,dayStartTime(options.trip.days[options.dayIndex]),projection.timezone)??options.now;
   const departure=projection.phase==='travel'?options.runtime?.since??options.now:projection.current?Math.max(options.now,projection.leaveAt??options.now):Math.max(options.now,dayStart,projection.leaveAt??options.now);
-  if(next&&next.mode!=='flight'){
+  if(next&&next.target.kind!=='free'&&next.mode!=='flight'){
     add(from,next.target.placeId,next.mode,departure);
     if(projection.phase!=='travel'&&next.mode!=='drive')add(from,next.target.placeId,'drive',departure);
   }
@@ -73,7 +73,7 @@ export async function calculateTodayRemainingRoutes(options:TodayOptions,current
   for(let index=0;index<remaining.length;index++){
     if(!current())return verified;
     const projection=buildTodayProjection({...options,verifiedRoutes:verified}),row=projection.rows.find(row=>row.target.id===remaining[index].target.id)!;
-    if(row.mode==='flight')continue;
+    if(row.mode==='flight'||row.target.kind==='free')continue;
     const previous=index>0?projection.rows.find(row=>row.target.id===remaining[index-1].target.id):projection.current;
     const fromId=previous?.target.placeId??projection.originPlaceId,toId=row.target.placeId,from=options.places[fromId],to=options.places[toId];
     if(!from||!to||fromId===toId)continue;

@@ -39,7 +39,7 @@ VITE_GOOGLE_MAPS_MAP_ID=your_javascript_map_id
 
 Use a browser key restricted to the local development origin and each deployed website origin, with API restrictions for the enabled Google services. Vite includes `VITE_` values in the browser bundle; they are not server secrets. Keep server credentials out of this file and do not commit real configuration values. Restart the development server after changing configuration, and rebuild to update a deployment.
 
-The app loads the Maps JavaScript API once and shares its Places and Routes libraries across the map, discovery, and itinerary. Failed searches and routes show retry controls. It never replaces a missing live route with an illustrative estimate.
+The app loads the Maps JavaScript API once and shares its Places and Routes libraries across the map, place details, and itinerary. Discovery lists use the Places API (New) Text Search REST endpoint for real pagination with the same website-restricted browser key. Failed searches and routes show retry controls. It never replaces a missing live route with an illustrative estimate.
 
 ## Google sign-in and deployment preparation
 
@@ -106,6 +106,16 @@ Choose **Change** beside **Start from** or **End at** to edit that endpoint only
 
 Open the trip title to edit the start date and destination time zone. Use an IANA time zone such as `Asia/Tokyo` or `Europe/London`; itinerary times are local to that zone. New trips ask for their destination time zone; the sample Kyoto trip uses `Asia/Tokyo`. Transit calculations use the trip date and the departure time resulting from earlier visits and journeys, including daylight-saving changes. Daytrail requests transit estimates only within 100 days ahead or 7 days in the past. Outside that window, it shows the limitation instead of substituting today's timetable. Walking and driving remain available where Google can provide a route.
 
+## Free time
+
+Use **+ Free** beside a desktop journey, or **Add free time after this stop** in a mobile stop sheet. Blocks start as one hour of exploring; choose Explore, Rest or café, Shopping or Nothing planned and adjust the length in 15-minute steps. The dashed card stays near its preceding stop, moves with that stop, adds no map pin or journey, and does not count as a stop.
+
+**Until the next booking** fills available time after reserving remaining visits and journeys. Opening waits are recalculated, known closing/last-entry constraints are preserved, and less than ten minutes remaining is flagged. Unknown journeys show a warning and the chosen duration rather than a guaranteed allowance. Transit departures are recalculated at the resulting time; a route that cannot stabilize stays unconfirmed. Exploring and shopping count as an estimated 1.5 km/hour; a rest/café block of at least 30 minutes overlapping lunch counts as a planned meal.
+
+Nearby saved Ideas use verified walking routes of up to 20 minutes. Replacing a block checks visit hours, onward travel and existing bookings, shortening the proposed visit when needed. Unverified visits remain in Ideas. Undo restores both the block and the Idea. Today mode consumes automatic free time before making a booking late, shows the time gained/lost, and offers **Done — head on** during the block. Free-block completion synchronizes like other progress; actual timestamps remain on the device.
+
+Migration `202610270007_daytrail_free_time.sql` extends strict trip and travel-progress validation, including collaborative edits. Apply it with `npm run db:migrate` before deploying this app version. Existing trips require no conversion.
+
 ## Today mode
 
 Open **Today** on mobile or **Today view** on desktop, including individual whole-trip day cards. The dark Now card shows the confirmed current stop, a leave countdown, and the next journey. **Start my day**, **Leaving now**, **I’ve arrived**, and **Stay 15 min longer** record actual timing; the clock never completes a stop. Today replaces the old Travel mode entry point. Today, Map and Bookings tabs keep the planner close by.
@@ -162,7 +172,7 @@ Flight schedules are entered manually; there is no flight-number lookup, matched
 
 With no mapped stops, the map opens around the trip destination using Google’s suggested city or region viewport. Once places are added, the itinerary takes priority. Panning or zooming keeps your chosen view; **Show destination** returns to the destination when the day is empty. Destination lookup results stay in memory and are never saved in trip data.
 
-Discover offers Attractions, Temples, Museums, Restaurants, and Cafés, with up to eight results per search. Cards include a lazy-loaded photo with author credits, Google rating and rating count, and opening hours for the selected trip weekday when available. Place details show a larger photo, the selected trip date's hours, an expandable weekly schedule, and Save / Add actions. Missing photos, ratings, or hours remain explicit rather than being invented.
+Discover offers Attractions, Museums, Parks, Shopping, Restaurants, Cafés, Bars & pubs, and Indoor ideas. Search returns ten places at a time; **Show more places** appends the next Google page without resetting your scroll position, map viewport, or selected details. Results are deduplicated by Google Place ID. Further pages keep the submitted query, category, and map area, even if the search input has since been edited. Failed pages can be retried without losing the results already loaded. When Google has no more pages, the list offers a different category or map area. Cards include a lazy-loaded photo with author credits, Google rating and rating count, and opening hours for the selected trip weekday when available. Place details show a larger photo, the selected trip date's hours, an expandable weekly schedule, and Save / Add actions. Missing photos, ratings, or hours remain explicit rather than being invented.
 
 One-click Add keeps discovery open, with an inline View itinerary action that reveals the new stop. The adjacent chooser can insert at the beginning, end, or after a named stop on any day. Names for the chosen day load on demand. A red opening-hours warning offers the nearest verified reorder, or a move to another day that is open, with Undo. Candidates use real routes, retain bookings and airport deadlines, and cannot worsen other known constraints. Searches are bounded; if no safe change is verified, the manual move and timing controls remain available.
 

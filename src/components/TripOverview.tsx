@@ -3,7 +3,7 @@ import {useDraggable, useDroppable} from '@dnd-kit/core';
 import {SortableContext, useSortable, verticalListSortingStrategy} from '@dnd-kit/sortable';
 import {CSS} from '@dnd-kit/utilities';
 import {ArrowRight, ArrowRightLeft, Bookmark, CalendarDays, Clock3, Compass, GripVertical, LockKeyhole, MapPin, Plus, RefreshCw, Route, TriangleAlert} from 'lucide-react';
-import {CATEGORIES, MAX_TRIP_DAYS, dayEndPlace, dayStartPlace, dayStartTime, formatDuration, formatTime, hasEndJourney, type Activity, type Day, type Place, type Trip} from '../model';
+import {CATEGORIES, MAX_TRIP_DAYS, dayEndPlace, dayStartPlace, dayStartTime, formatDuration, formatTime, hasEndJourney, type Activity, type Day, type Place, type Trip, type ScheduleRow} from '../model';
 import type {DayOverviewSummary} from '../useTripOverview';
 import {tripDayDate} from '../useLiveRoutes';
 import './overview.css';
@@ -35,7 +35,7 @@ function PlaceCredits({place}: {place: Place}) {
   return <span className="overview-place-credits">{place.attributions.map((credit, index) => <span key={index}>{credit.providerURI ? <a href={credit.providerURI} target="_blank" rel="noreferrer">{credit.provider}</a> : credit.provider}</span>)}</span>;
 }
 
-function OverviewStop({activity, place, readOnly, onMove, warning, date}: {date:string;activity: Activity; place: Place; readOnly: boolean; onMove: () => void; warning?: string}) {
+function OverviewStop({activity, place, readOnly, onMove, warning, date, freeTime}: {date:string;activity: Activity; place: Place; readOnly: boolean; onMove: () => void; warning?: string;freeTime?:ScheduleRow['freeTime']}) {
   const {attributes, listeners, setNodeRef, transform, transition, isDragging} = useSortable({
     id: 'act:' + activity.aid,
     data: {type: 'activity', aid: activity.aid},
@@ -50,6 +50,7 @@ function OverviewStop({activity, place, readOnly, onMove, warning, date}: {date:
       {activity.mode!=='flight'&&!activity.departureForFlightId&&<PlaceHours place={place} date={date}/>}
       {warning && <span className="overview-stop-warning"><TriangleAlert size={11}/>{warning}</span>}
       <PlaceCredits place={place}/>
+      {activity.freeTime&&<span className="overview-free-time"><Compass size={12} aria-hidden="true"/><span><strong>{{explore:'Explore',rest:'Rest or café',shopping:'Shopping',nothing:'Nothing planned'}[activity.freeTime.kind]}</strong>{' · '}{freeTime?.approx?'≈ ':''}{freeTime?formatDuration(freeTime.duration):activity.freeTime.untilBooking?'Until the next booking':formatDuration(activity.freeTime.duration)}<small>Free time nearby · moves with this stop</small></span></span>}
     </div>
     {!readOnly && <button type="button" className="overview-move" onClick={onMove} aria-label={`Move ${place.name}`} title="Choose a day and position"><ArrowRightLeft size={15}/></button>}
   </li>;
@@ -80,6 +81,7 @@ function OverviewDay({day, index, date, places, summary, loading, readOnly, onOp
   const endPlace = dayEndPlace(day, places);
   const visits = day.items.reduce((total, activity) => total + activity.duration, 0);
   const sc = summary?.sc;
+  const freeMinutes=sc?.rows.reduce((total,row)=>total+(row.freeTime?.duration??0),0)??0;
   const bookingIssues = sc?.rows.filter(row => row.late > 0).length ?? 0;
   const finishOver = sc && day.finishBy != null ? Math.max(0, sc.finish - day.finishBy) : 0;
   const isCheckingRoutes = summary?.routeLoading || (!summary && loading);
@@ -100,6 +102,7 @@ function OverviewDay({day, index, date, places, summary, loading, readOnly, onOp
     {hasJourney && <div className="overview-timing">
       <div><Clock3 size={14}/><span>Start {formatTime(dayStartTime(day))}<b>·</b>{isCheckingRoutes ? 'Checking timing…' : sc && !sc.finishApprox ? `Arrive ${formatTime(sc.finish)}` : 'Timing incomplete'}</span></div>
       <div><Route size={14}/><span>{sc && (!sc.unknown || sc.travel > 0) ? `${sc.unknown ? 'At least ' : ''}${formatDuration(sc.travel)} travel` : isCheckingRoutes ? 'Checking journeys…' : 'Travel time unavailable'}{day.finishBy != null && <><b>·</b>Goal {formatTime(day.finishBy)}</>}</span></div>
+      {freeMinutes>0&&<div><Compass size={14}/><span>{sc?.rows.some(row=>row.freeTime?.approx)?'≈ ':''}{formatDuration(freeMinutes)} free time</span></div>}
     </div>}
     {(bookingIssues > 0 || hoursWarnings > 0 || finishOver > 0) && <div className="overview-day-alerts">
       {(bookingIssues > 0 || hoursWarnings > 0) && <p><TriangleAlert size={13}/><span>{[bookingIssues > 0 ? `${bookingIssues} booking ${bookingIssues === 1 ? 'conflict' : 'conflicts'}` : '', hoursWarnings > 0 ? `${hoursWarnings} ${hoursWarnings === 1 ? 'hours warning' : 'hours warnings'}` : ''].filter(Boolean).join(' · ')}</span></p>}
@@ -113,7 +116,7 @@ function OverviewDay({day, index, date, places, summary, loading, readOnly, onOp
           const check = summary?.visitChecks?.[activity.aid];
           const warning = check?.status === 'closed' || check?.status === 'short' ? check.label : undefined;
           const row = sc?.rows.find(row => row.it.aid === activity.aid);
-          return <OverviewStop key={activity.aid} date={row?visitDateForHours(row,date):date} activity={activity} place={place} readOnly={readOnly} onMove={() => onMove(activity.aid)} warning={warning}/>;
+          return <OverviewStop key={activity.aid} date={row?visitDateForHours(row,date):date} activity={activity} place={place} readOnly={readOnly} onMove={() => onMove(activity.aid)} warning={warning} freeTime={row?.freeTime}/>;
         })}</ol>
       </SortableContext>
       <div className="overview-day-footer">

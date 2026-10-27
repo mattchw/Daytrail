@@ -116,4 +116,13 @@ check('saved booking addresses remain usable with only a supplied local-language
  const html=renderBooking({place:{...bookingPlace,area:'',offlineDetails:{name:'Tea ceremony',localAddress:'京都市東山区 12'}}});assert.match(html,/京都市東山区 12/);assert.match(html,/Copy address/);assert.doesNotMatch(html,/No address saved yet/);
  const both=renderBooking({place:{...bookingPlace,offlineDetails:{name:'Tea ceremony',address:'12 Saved Street',localAddress:'京都市東山区 12'}}});assert.match(both,/12 Saved Street/);assert.match(both,/京都市東山区 12/);assert.doesNotMatch(both,/12 Tea Street, Kyoto/);
 });
+check('free time has its own current-location card, booking deadline and head-on action',()=>{
+  const free={...current,target:{id:'free:free-a',kind:'free',placeId:'museum',mode:'walk',freeTime:{id:'free-a',kind:'explore',duration:60,untilBooking:true}},name:'Time to explore',freeMinutes:25,freeBookingName:'Tea ceremony',hours:undefined};
+  const html=render({projection:{...projection,current:free,leaveAt:time('12:40'),leaveInMinutes:25},hoursLabel:'09:00–17:00'});
+  assert.match(html,/Near City museum/);assert.match(html,/Head off at 12:40 to reach Tea ceremony on time/);assert.match(html,/25 min left/);assert.match(html,/Done — head on/);assert.doesNotMatch(html,/Stay 15 min longer|planned visit|09:00–17:00/);
+});
+check('an upcoming free block needs no map pin, directions or arrival confirmation',()=>{
+  const free={...next,target:{id:'free:free-a',kind:'free',placeId:'museum',mode:'walk',freeTime:{id:'free-a',kind:'rest',duration:30,untilBooking:false}},place:museum,name:'Rest or café',freeMinutes:30};
+  const html=render({projection:{...projection,next:free}});assert.match(html,/30 min · no extra travel/);assert.match(html,/Start free time/);assert.doesNotMatch(html,/google.com\/maps\/dir|Add an exact location|I’ve arrived/);
+});
 console.log(`${checks} Today presentation checks passed.`);

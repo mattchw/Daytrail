@@ -4,6 +4,7 @@ import { computeJourney, hasCoordinates, unavailableJourney } from './googleMaps
 import type {OpeningInfo} from './openingHours';
 import {openingWaitMinutes} from './visitHours';
 import {localDateAt} from './model';
+import {scheduleWithOpeningHours} from './hoursPlanning';
 
 export interface DayRouteInput { date: string; timezone: string; day: Day; places: Record<string, Place>; flights?: FlightSegment[]; incomingFlightIssue?: string | null; hours?:Record<string,OpeningInfo|undefined> }
 export type JourneyComputer = typeof computeJourney;
@@ -106,12 +107,13 @@ export function reuseReadyStaticLegs(input: DayRouteInput, priorInput: DayRouteI
 }
 
 /** Transit departures depend on preceding journeys; fixed bookings never reset uncertainty. */
-export async function calculateDayRoutes(
+async function calculateDayRoutePass(
   input: DayRouteInput,
   onLeg: (id: string, leg: Journey) => void = () => {},
   current: () => boolean = () => true,
   compute: JourneyComputer = computeJourney,
   now = Date.now(),
+  freeDurations: Record<string, number> = {},
 ): Promise<Record<string, Journey>> {
   const result = pendingLegs(input);
   if (input.incomingFlightIssue || !hasEndJourney(input.day)) return result;
@@ -123,8 +125,8 @@ export async function calculateDayRoutes(
   let placeZone=input.timezone;
   const steps = [...input.day.items.map(item => ({ id: item.aid, place: input.places[item.placeId], mode: item.mode,
     duration: item.departureForFlightId ? input.flights?.find(flight => flight.id === item.departureForFlightId)?.airportBufferMinutes ?? 120 : item.duration,
-    fixed: item.fixed, flightId: item.flightId, airportAnchor:!!item.departureForFlightId })),
-    { id: 'return', place: dayEndPlace(input.day, input.places), mode: input.day.endMode, duration: 0, fixed: null, flightId: input.day.endFlightId, airportAnchor:false }];
+    freeTime: item.freeTime, fixed: item.fixed, flightId: item.flightId, airportAnchor:!!item.departureForFlightId })),
+    { id: 'return', place: dayEndPlace(input.day, input.places), mode: input.day.endMode, duration: 0, fixed: null, flightId: input.day.endFlightId, airportAnchor:false, freeTime: undefined }];
   for (const step of steps) {
     if (!current()) return result;
     let leg: Journey;
@@ -158,8 +160,51 @@ export async function calculateDayRoutes(
         minutes = dayMinutesAt(departureInstant, input.date, input.timezone);
       } else { departureInstant = null; previousArrivalInstant = null; minutes = Math.max(minutes + (leg.min ?? 0), step.fixed ?? 0) + step.duration; }
     }
+    if (step.freeTime) {
+      const extra = freeDurations[step.freeTime.id] ?? step.freeTime.duration;
+      if (departureInstant !== null) departureInstant += extra * 60000;
+      minutes = departureInstant !== null ? dayMinutesAt(departureInstant, input.date, input.timezone) : minutes + extra;
+    }
     previous = step.place;
   }
+  return result;
+}
+
+/** Until-booking blocks change transit departure times. Resolve their allowance
+ * against real routes, then re-query affected departures until the clocks agree.
+ * A bounded unresolved transit cycle stays unknown rather than promising a booking.
+ */
+export async function calculateDayRoutes(input: DayRouteInput, onLeg: (id: string, leg: Journey) => void = () => {},
+  current: () => boolean = () => true, compute: JourneyComputer = computeJourney, now = Date.now()): Promise<Record<string, Journey>> {
+  const blocks = input.day.items.filter(item => item.freeTime);
+  if (!blocks.some(item => item.freeTime!.untilBooking)) return calculateDayRoutePass(input, onLeg, current, compute, now);
+  let durations = Object.fromEntries(blocks.map(item => [item.freeTime!.id, item.freeTime!.untilBooking ? 0 : item.freeTime!.duration]));
+  const cache = new Map<string, Journey>();
+  const cachedCompute: JourneyComputer = async (from, to, mode, departure) => {
+    const key = JSON.stringify([from.id, to.id, mode, departure?.getTime()]);
+    const existing = cache.get(key); if (existing) return existing;
+    const value = await compute(from, to, mode, departure); cache.set(key, value); return value;
+  };
+  const trip: Trip = { id: 'route-calculation', name: 'Route calculation', destination: '', startDate: input.date,
+    timezone: input.timezone, days: [input.day], customPlaces: {}, ideas: [], flights: input.flights };
+  let result = pendingLegs(input), converged = false;
+  for (let pass = 0; pass < 4 && current(); pass++) {
+    result = await calculateDayRoutePass(input, () => {}, current, cachedCompute, now, durations);
+    if (!current()) return result;
+    const planned = scheduleWithOpeningHours(input.day, input.places, result, { date: input.date, hours: input.hours ?? {}, context: { trip, dayIndex: 0 } });
+    const next = Object.fromEntries(planned.rows.flatMap(row => row.freeTime ? [[row.freeTime.id, row.freeTime.duration]] : []));
+    if (Object.entries(next).every(([id, duration]) => durations[id] === duration)) { converged = true; break; }
+    durations = next;
+  }
+  if (!converged) {
+    let afterFree = false;
+    for (const item of input.day.items) {
+      if (afterFree && item.mode === 'transit') result[item.aid] = unavailableJourney('transit', 'Choose a fixed free-time length to confirm this changing transit departure.');
+      if (item.freeTime?.untilBooking) afterFree = true;
+    }
+    if (afterFree && input.day.endMode === 'transit') result.return = unavailableJourney('transit', 'Choose a fixed free-time length to confirm this changing transit departure.');
+  }
+  if (current()) for (const [id, leg] of Object.entries(result)) onLeg(id, leg);
   return result;
 }
 

@@ -45,14 +45,15 @@ function validate(value: TravelWorkspace | null, key: string): TravelWorkspace |
   if (!record(value) || value.version !== 1 || value.key !== key || !record(value.trips) || Object.keys(value.trips).length > 100) fail();
   for (const [tripId, trip] of Object.entries(value.trips)) {
     if (!validCloudId(tripId) || !record(trip) || !record(trip.marks) || !record(trip.targets)
-      || Object.keys(trip.marks).length > MAX_TRAVEL_MARKS || Object.keys(trip.targets).length > 3130
+      || Object.keys(trip.marks).length > MAX_TRAVEL_MARKS || Object.keys(trip.targets).length > 6130
       || typeof trip.remoteLoaded !== 'boolean' || trip.error !== null && typeof trip.error !== 'string') fail();
     if(trip.today){
       if(!record(trip.today)||Object.keys(trip.today).length>100)fail();
       for(const [dayId,raw] of Object.entries(trip.today)){
-        if(!validCloudId(dayId)||typeof raw!=='string'||raw.length>4000)fail();
+        if(!validCloudId(dayId)||typeof raw!=='string'||raw.length>14000)fail();
         try{const value=JSON.parse(raw),runtime=value.runtime;
-          if(Object.keys(value).some(k=>!['ownerId','scope','runtime'].includes(k))||value.ownerId!==(key==='guest'?null:key.slice(8))||value.scope!==(key==='guest'?'guest':'account')||!runtime||runtime.schema!==1||runtime.tripId!==tripId||runtime.dayId!==dayId||Object.keys(runtime).some(k=>!['schema','tripId','dayId','date','timezone','phase','targetId','placeId','since','leaveAt','updatedAt','originArrivedAt'].includes(k)))fail();
+          if(Object.keys(value).some(k=>!['ownerId','scope','runtime'].includes(k))||value.ownerId!==(key==='guest'?null:key.slice(8))||value.scope!==(key==='guest'?'guest':'account')||!runtime||runtime.schema!==1||runtime.tripId!==tripId||runtime.dayId!==dayId||Object.keys(runtime).some(k=>!['schema','tripId','dayId','date','timezone','phase','targetId','placeId','since','leaveAt','updatedAt','originArrivedAt','bypassedFreeIds'].includes(k)))fail();
+          if(runtime.bypassedFreeIds!==undefined&&(!Array.isArray(runtime.bypassedFreeIds)||runtime.bypassedFreeIds.length>100||new Set(runtime.bypassedFreeIds).size!==runtime.bypassedFreeIds.length||runtime.bypassedFreeIds.some((id:unknown)=>!validTravelTarget(id)||!id.startsWith('free:'))))fail();
         }catch{fail();}
       }
     }

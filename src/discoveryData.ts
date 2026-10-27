@@ -5,7 +5,7 @@ export { getOpeningSummary } from './openingHours';
 export type { OpeningSchedule, OpeningSummary } from './openingHours';
 
 export interface SearchBounds { north: number; south: number; east: number; west: number }
-export type DiscoveryCategory = 'all' | 'attractions' | 'temples' | 'museums' | 'restaurants' | 'cafes' | 'indoor';
+export type DiscoveryCategory = 'all' | 'attractions' | 'museums' | 'restaurants' | 'cafes' | 'parks' | 'shopping' | 'nightlife' | 'indoor';
 export interface DiscoveryPhoto { key: string; width: number; height: number; authors: { name: string; uri?: string }[] }
 export interface DiscoveryInfo {
   rating?: number;
@@ -20,6 +20,7 @@ export interface DiscoveryInfo {
   regularHours?: OpeningSchedule;
 }
 export interface DiscoveryResult { place: Place; info: DiscoveryInfo }
+export interface DiscoverySearchPage { results: DiscoveryResult[]; nextPageToken?: string }
 /** Narrow primary venue types suggest indoor options; a venue's secondary café is not enough. */
 export function indoorDiscoveryResult(result:DiscoveryResult,exposure?:'indoor'|'outdoor'|'mixed'|'unknown'):boolean {
   if(exposure)return exposure==='indoor';
@@ -28,7 +29,7 @@ export function indoorDiscoveryResult(result:DiscoveryResult,exposure?:'indoor'|
 const CACHE_MS = 5 * 60_000;
 const CACHE_LIMIT = 100;
 interface CacheEntry<T> { at: number; promise: Promise<T> }
-const searchCache = new Map<string, CacheEntry<DiscoveryResult[]>>();
+const searchCache = new Map<string, CacheEntry<DiscoverySearchPage>>();
 // Detail responses never reuse the intentionally smaller card response.
 const detailCache = new Map<string, CacheEntry<DiscoveryResult>>();
 const visitHoursCache = new Map<string, CacheEntry<OpeningInfo>>();
@@ -37,8 +38,11 @@ let photoSequence = 0;
 const baseFields = ['id', 'displayName', 'location', 'formattedAddress', 'googleMapsURI', 'types', 'attributions'];
 const cardFields = [...baseFields, 'primaryType', 'primaryTypeDisplayName', 'businessStatus', 'rating', 'userRatingCount', 'photos', 'currentOpeningHours', 'utcOffsetMinutes'];
 const detailFields = [...cardFields, 'regularOpeningHours'];
-const categoryText: Record<DiscoveryCategory, string> = { all: 'tourist attractions', attractions: 'tourist attractions', temples: 'temples', museums: 'museums', restaurants: 'restaurants', cafes: 'cafes', indoor:'museums and art galleries' };
-const categoryType: Partial<Record<DiscoveryCategory, string>> = { attractions: 'tourist_attraction', museums: 'museum', restaurants: 'restaurant', cafes: 'cafe' };
+const categoryText: Record<DiscoveryCategory, string> = { all: 'tourist attractions', attractions: 'tourist attractions', museums: 'museums', restaurants: 'restaurants', cafes: 'cafes', parks: 'parks and gardens', shopping: 'shopping, markets and malls', nightlife: 'bars and pubs', indoor:'museums and art galleries' };
+// Shopping includes markets and independent shops, rather than restricting it to malls.
+const categoryType: Partial<Record<DiscoveryCategory, string>> = { attractions: 'tourist_attraction', museums: 'museum', restaurants: 'restaurant', cafes: 'cafe', parks: 'park', nightlife: 'bar' };
+const browserKey = import.meta.env?.VITE_GOOGLE_MAPS_API_KEY?.trim();
+const restCardFields = cardFields.map(field => `places.${field === 'googleMapsURI' ? 'googleMapsUri' : field}`);
 const safeURL = (value?: string | null): string | undefined => value && /^https:\/\//i.test(value) ? value : undefined;
 
 function cached<T>(cache: Map<string, CacheEntry<T>>, key: string, work: () => Promise<T>): Promise<T> {
@@ -73,9 +77,10 @@ export function withinSearchBounds(place: Pick<Place, 'lat' | 'lng'>, bounds: Se
 export function discoverySearchRequest(query: string, destination: string, category: DiscoveryCategory, bounds?: SearchBounds): google.maps.places.SearchByTextRequest {
   if (bounds && !validSearchBounds(bounds)) throw new Error('Move or zoom the map to choose a valid search area.');
   let clean = query.trim().slice(0, 240) || categoryText[category];
-  if (category === 'temples' && !/temple|shrine|寺|神社/i.test(clean)) clean = `${clean} temples`;
+  // Shopping has no single inclusive provider type: keep its intent even for a street or district query.
+  if (category === 'shopping' && !/\b(?:shopping|shops?|stores?|markets?|malls?|boutiques?|retail)\b/i.test(clean)) clean = `${clean} shopping`;
   const request: google.maps.places.SearchByTextRequest = {
-    textQuery: bounds ? clean : placeSearchQuery(clean, destination), fields: [...cardFields], maxResultCount: 8, language: 'en',
+    textQuery: bounds ? clean : placeSearchQuery(clean, destination), fields: [...cardFields], maxResultCount: 10, language: 'en',
     ...(bounds ? { locationRestriction: { ...bounds } } : {}),
   };
   const includedType = categoryType[category];
@@ -136,20 +141,115 @@ async function normalize(value: google.maps.places.Place, details = false): Prom
     currentHours: openingSchedule(value.currentOpeningHours), regularHours: openingSchedule(value.regularOpeningHours),
   } };
 }
-export function searchDiscovery(query: string, destination: string, category: DiscoveryCategory = 'all', bounds?: SearchBounds): Promise<DiscoveryResult[]> {
+type JsonObject = Record<string, unknown>;
+const object = (value: unknown): JsonObject | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : undefined;
+const string = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
+const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+const number = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+function restHours(value: unknown): google.maps.places.OpeningHours | undefined {
+  const hours = object(value);
+  if (!hours || !Array.isArray(hours.periods)) return undefined;
+  const point = (value: unknown): OpeningPoint | undefined => {
+    const raw = object(value);
+    if (!raw) return undefined;
+    // Protobuf JSON may omit zero-valued fields, including midnight and Sunday.
+    const day = raw.day ?? 0, hour = raw.hour ?? 0, minute = raw.minute ?? 0;
+    if (![day, hour, minute].every(Number.isInteger) || typeof day !== 'number' || typeof hour !== 'number' || typeof minute !== 'number' || day < 0 || day > 6 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return undefined;
+    return { day, hour, minute };
+  };
+  const periods = hours.periods.flatMap(value => {
+    const period = object(value), open = point(period?.open);
+    if (!open) return [];
+    const close = period?.close === undefined ? undefined : point(period.close);
+    if (period?.close !== undefined && !close) return [];
+    return [{ open, ...(close ? { close } : {}) }];
+  });
+  return { periods, weekdayDescriptions: array(hours.weekdayDescriptions).filter((value): value is string => typeof value === 'string') } as google.maps.places.OpeningHours;
+}
+function restPhoto(value: unknown): google.maps.places.Photo | undefined {
+  const photo = object(value), name = string(photo?.name);
+  // Only a Google photo resource name may become a media URL; never trust a response URL.
+  if (!photo || !name || !/^places\/[A-Za-z0-9_-]{1,512}\/photos\/[A-Za-z0-9_-]{1,4096}$/.test(name)) return undefined;
+  return {
+    widthPx: Math.max(0, number(photo.widthPx) ?? 0), heightPx: Math.max(0, number(photo.heightPx) ?? 0),
+    authorAttributions: array(photo.authorAttributions).flatMap(value => {
+      const author = object(value), displayName = string(author?.displayName);
+      return displayName ? [{ displayName, uri: safeURL(string(author?.uri)) }] : [];
+    }),
+    getURI({ maxWidth }: { maxWidth?: number }) {
+      const parameters = new URLSearchParams({ key: browserKey!, maxWidthPx: String(maxWidth ?? 400) });
+      return `https://places.googleapis.com/v1/${name}/media?${parameters}`;
+    },
+  } as google.maps.places.Photo;
+}
+/** REST and SDK cards share one normalizer and stable place IDs. No detail lookup is needed. */
+async function normalizeRest(value: unknown): Promise<DiscoveryResult | null> {
+  const raw = object(value);
+  if (!raw) return null;
+  const id = string(raw.id), displayName = string(object(raw.displayName)?.text);
+  const location = object(raw.location), lat = number(location?.latitude), lng = number(location?.longitude);
+  if (!id || !displayName || lat === undefined || lng === undefined || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  const adapted = {
+    id, displayName, location: { lat: () => lat, lng: () => lng },
+    formattedAddress: string(raw.formattedAddress), googleMapsURI: safeURL(string(raw.googleMapsUri)),
+    types: array(raw.types).filter((value): value is string => typeof value === 'string'),
+    attributions: array(raw.attributions).flatMap(value => {
+      const attribution = object(value), provider = string(attribution?.provider);
+      return provider ? [{ provider, providerURI: safeURL(string(attribution?.providerUri)) }] : [];
+    }),
+    primaryType: string(raw.primaryType), primaryTypeDisplayName: string(object(raw.primaryTypeDisplayName)?.text),
+    businessStatus: string(raw.businessStatus), rating: number(raw.rating), userRatingCount: number(raw.userRatingCount), utcOffsetMinutes: number(raw.utcOffsetMinutes),
+    currentOpeningHours: restHours(raw.currentOpeningHours),
+    photos: array(raw.photos).map(restPhoto).filter((photo): photo is google.maps.places.Photo => photo !== undefined),
+  } as unknown as google.maps.places.Place;
+  return normalize(adapted);
+}
+function usablePageToken(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= 8_192 && !/[\u0000-\u001f\u007f]/.test(value) ? value : undefined;
+}
+/** Places (New) REST exposes pagination that the JavaScript searchByText API omits. */
+export function searchDiscoveryPage(query: string, destination: string, category: DiscoveryCategory = 'all', bounds?: SearchBounds, pageToken?: string): Promise<DiscoverySearchPage> {
   let request: google.maps.places.SearchByTextRequest;
   try { request = discoverySearchRequest(query, destination, category, bounds); }
   catch (error) { return Promise.reject(error); }
-  const key = JSON.stringify([request.textQuery, category, bounds]);
+  if (pageToken !== undefined && !usablePageToken(pageToken)) return Promise.reject(new Error('Please search again to browse more places.'));
+  if (!browserKey) return Promise.reject(new Error('Google Maps is not configured. Add the browser API key and rebuild.'));
+  const body = {
+    textQuery: request.textQuery, languageCode: 'en', pageSize: 10,
+    ...(request.includedType ? { includedType: request.includedType, strictTypeFiltering: true } : {}),
+    ...(bounds ? { locationRestriction: { rectangle: {
+      low: { latitude: bounds.south, longitude: bounds.west }, high: { latitude: bounds.north, longitude: bounds.east },
+    } } } : {}),
+    ...(pageToken ? { pageToken } : {}),
+  };
+  const key = JSON.stringify([body, category]);
   return cached(searchCache, key, async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
-      const maps = await loadGoogleMaps();
-      const { Place: GooglePlace } = await maps.importLibrary('places') as google.maps.PlacesLibrary;
-      const response = await timeout(GooglePlace.searchByText(request));
-      const normalized = await Promise.all(response.places.slice(0, 8).map(place => normalize(place)));
-      return normalized.filter((result): result is DiscoveryResult => result !== null && (!bounds || withinSearchBounds(result.place, bounds)) && (category!=='indoor'||indoorDiscoveryResult(result)));
+      const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST', credentials: 'omit', cache: 'no-store', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': browserKey, 'X-Goog-FieldMask': [...restCardFields, 'nextPageToken'].join(',') },
+        body: JSON.stringify(body),
+      });
+      const payload = object(await response.json());
+      if (!response.ok) throw { code: string(object(payload?.error)?.status) ?? (response.status === 403 ? 'PERMISSION_DENIED' : response.status === 429 ? 'RESOURCE_EXHAUSTED' : 'UNAVAILABLE') };
+      if (!payload || (payload.places !== undefined && !Array.isArray(payload.places))) throw new Error('invalid response');
+      const normalized = await Promise.all(array(payload.places).slice(0, 10).map(normalizeRest));
+      const seen = new Set<string>();
+      const results = normalized.filter((result): result is DiscoveryResult => {
+        if (!result || seen.has(result.place.id) || (bounds && !withinSearchBounds(result.place, bounds)) || (category === 'indoor' && !indoorDiscoveryResult(result))) return false;
+        seen.add(result.place.id); return true;
+      });
+      const nextPageToken = usablePageToken(payload.nextPageToken);
+      return { results, ...(nextPageToken && nextPageToken !== pageToken ? { nextPageToken } : {}) };
     } catch (error) { throw new Error(mapsErrorMessage(error)); }
+    finally { clearTimeout(timer); }
   });
+}
+/** Compatibility for callers that only need the first page. */
+export async function searchDiscovery(query: string, destination: string, category: DiscoveryCategory = 'all', bounds?: SearchBounds): Promise<DiscoveryResult[]> {
+  return (await searchDiscoveryPage(query, destination, category, bounds)).results;
 }
 export function fetchDiscoveryDetails(googleId: string): Promise<DiscoveryResult> {
   if (!/^[A-Za-z0-9_-]{1,512}$/.test(googleId)) return Promise.reject(new Error('This saved place has an invalid Google Maps ID.'));

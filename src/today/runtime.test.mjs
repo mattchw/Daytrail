@@ -56,6 +56,20 @@ await check('leaving commits explicit progress and Undo restores both timing and
   await s.view.leaveNow(s.project());assert.equal(s.view.runtime.phase,'travel');assert.equal(s.options.marks['activity:a'],'done');assert.equal(s.view.canUndo,true);
   await s.view.undo();assert.deepEqual(s.view.runtime,prior);assert.equal(s.options.marks['activity:a'],'planned');s.dispose();
 });
+await check('free-time entry and completion undo the paired progress and runtime together',async()=>{
+  const s=session(),trip=structuredClone(s.options.trip);trip.days[0].items[0].freeTime={id:'free-a',kind:'explore',duration:60,untilBooking:true};trip.days[0].items[1].fixed=660;
+  s.render({trip});await arrive(s);const before=s.view.runtime;
+  await s.view.leaveNow(s.project());assert.equal(s.view.runtime.targetId,'free:free-a');assert.equal(s.view.runtime.phase,'visit');assert.equal(s.options.marks['activity:a'],'done');
+  await s.view.undo();assert.deepEqual(s.view.runtime,before);assert.equal(s.options.marks['activity:a'],'planned');
+  await s.view.leaveNow(s.project());const free=s.view.runtime;await s.view.leaveNow(s.project());assert.equal(s.options.marks['free:free-a'],'done');assert.equal(s.view.runtime.phase,'travel');
+  await s.view.undo();assert.deepEqual(s.view.runtime,free);assert.equal(s.options.marks['free:free-a'],'planned');s.dispose();
+});
+await check('zero-minute bypass is persisted and undone with leaving the preceding stop',async()=>{
+  const s=session(),trip=structuredClone(s.options.trip);trip.days[0].items[0].freeTime={id:'free-a',kind:'explore',duration:60,untilBooking:true};trip.days[0].items[1].fixed=550;
+  s.render({trip});await arrive(s);const before=s.view.runtime;
+  await s.view.leaveNow(s.project());assert.deepEqual(s.view.runtime.bypassedFreeIds,['free:free-a']);assert.equal(s.view.runtime.targetId,'activity:b');assert.equal(s.project().stale,false);
+  await s.view.undo();assert.deepEqual(s.view.runtime,before);assert.equal(s.options.marks['activity:a'],'planned');s.dispose();
+});
 await check('arrival-only Undo is invalidated by a different manual progress change',async()=>{
   const s=session();await arrive(s);const before=s.view.runtime;
   s.render({marks:{'activity:b':'skipped'}});assert.equal(s.view.canUndo,false);await s.view.undo();assert.deepEqual(s.view.runtime,before);s.dispose();

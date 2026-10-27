@@ -6,7 +6,7 @@ export const MAX_TRAVEL_MARKS = 10_000;
 export function validTravelTarget(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const colon = value.indexOf(':');
-  return ['activity', 'end', 'flight'].includes(value.slice(0, colon)) && validCloudId(value.slice(colon + 1));
+  return ['activity', 'end', 'flight', 'free'].includes(value.slice(0, colon)) && validCloudId(value.slice(colon + 1));
 }
 const validState = (value: unknown): value is TravelState => value === 'planned' || value === 'done' || value === 'skipped';
 const invalid = () => new TravelError('invalid', 'This travel update could not be verified. Your progress remains on this device.');

@@ -89,6 +89,7 @@ function canonicalDay(source: Day): Day {
     items: source.items.map(item => ({
       aid: item.aid, placeId: item.placeId, duration: item.duration,
       fixed: item.fixed, mode: item.mode, note: item.note,
+      ...(item.freeTime !== undefined ? {freeTime:{id:item.freeTime.id,kind:item.freeTime.kind,duration:item.freeTime.duration,untilBooking:item.freeTime.untilBooking}} : {}),
       ...(item.meal !== undefined ? {meal:item.meal} : {}),
       ...(item.walkingMeters !== undefined ? {walkingMeters:item.walkingMeters} : {}),
       ...(item.exposure !== undefined ? {exposure:item.exposure} : {}),

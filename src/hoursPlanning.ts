@@ -1,4 +1,4 @@
-import { bookingDayDate, dayHasFlight, dayMinutesAt, dayTimezone, flightTiming, incomingFlightStartIssue, localDateAt, schedule, scheduleVisitWindow, type Activity, type Day, type Journey, type Place, type ScheduleContext, type Trip } from './model';
+import { bookingDayDate, dayHasFlight, dayMinutesAt, dayTimezone, flightTiming, incomingFlightStartIssue, localDateAt, schedule, scheduleRaw, resolveFreeTimeSchedule, scheduleVisitWindow, type Activity, type Day, type Journey, type Place, type ScheduleContext, type Trip } from './model';
 import type { OpeningInfo } from './openingHours';
 import { checkVisitHours, openingWaitMinutes, type VisitHoursCheck } from './visitHours';
 
@@ -26,9 +26,9 @@ export function visitDateForHours(row: ReturnType<typeof schedule>['rows'][numbe
  * Temporary start constraints are calculation-only: no activity is changed into a booking.
  * An explicit empty routes object is required when provider routes are unavailable.
  */
-export function scheduleWithOpeningHours(day: Day, places: Record<string, Place>, legs: Record<string, Journey> | undefined, options: HoursScheduleOptions): HoursSchedule {
+function scheduleHoursPass(day: Day, places: Record<string, Place>, legs: Record<string, Journey> | undefined, options: HoursScheduleOptions, durations: Record<string, number>): HoursSchedule {
   const temporary: Day = { ...day, items: day.items.map(item => ({ ...item })) };
-  let result = schedule(temporary, places, legs, options.context);
+  let result = scheduleRaw(temporary, places, legs, options.context, durations);
   const waits = new Map<string, number>();
   for (let index = 0; index < day.items.length; index++) {
     const item = day.items[index], row = result.rows[index];
@@ -37,10 +37,25 @@ export function scheduleWithOpeningHours(day: Day, places: Record<string, Place>
     if (!waiting) continue;
     temporary.items[index].fixed = row.start + waiting;
     waits.set(item.aid, waiting);
-    result = schedule(temporary, places, legs, options.context);
+    result = scheduleRaw(temporary, places, legs, options.context, durations);
   }
   return { ...result, rows: result.rows.map((row, index) => ({ ...row, it: day.items[index],
     ...(waits.has(row.it.aid) ? { openingWaitMinutes: waits.get(row.it.aid) } : {}) })) };
+}
+
+export function scheduleWithOpeningHours(day: Day, places: Record<string, Place>, legs: Record<string, Journey> | undefined, options: HoursScheduleOptions): HoursSchedule {
+  if (!day.items.some(item => item.freeTime?.untilBooking)) return scheduleHoursPass(day, places, legs, options, {});
+  return resolveFreeTimeSchedule(day, durations => scheduleHoursPass(day, places, legs, options, durations), (before, after, from, through) =>
+    after.rows.slice(from + 1, through + 1).every((row, offset) => {
+      if (isAnchor(row.it)) return true;
+      const previous = before.rows[from + 1 + offset];
+      const oldCheck = checkVisitHours(options.hours[row.it.placeId], { ...scheduleVisitWindow(previous, options.date), allowWait: row.it.fixed === null });
+      const nextCheck = checkVisitHours(options.hours[row.it.placeId], { ...scheduleVisitWindow(row, options.date), allowWait: row.it.fixed === null });
+      return issueRank(nextCheck) <= issueRank(oldCheck)
+        && !(oldCheck.status !== 'unknown' && nextCheck.status === 'unknown')
+        && !(oldCheck.status === 'closed' && row.arrive > previous.arrive)
+        && !(oldCheck.status === 'short' && nextCheck.status === 'short' && (nextCheck.availableMinutes ?? 0) < (oldCheck.availableMinutes ?? 0));
+    }));
 }
 
 export interface HoursFixInput {

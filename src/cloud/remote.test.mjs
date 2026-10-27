@@ -166,6 +166,14 @@ await check('legacy issued mutation keeps its schema1 payload for idempotent ret
   const issued=mutation(), before=clone(issued), f=fixture(); await f.remote.mutate(issued);
   assert.deepEqual(issued,before); assert.equal(f.calls.find(call=>call[0]==='rpc')[2].p_schema_version,1);
 });
+await check('free-time schema survives cloud roundtrip and cannot be mislabeled as schema1',async()=>{
+  const trip=seedTrip();trip.days[0].items[0].freeTime={id:'free-cloud',kind:'rest',duration:30,untilBooking:true};
+  assert.throws(()=>decodeCloudTrip(row(trip),owner),error=>error.code==='invalid');
+  await rejects(()=>fixture().remote.mutate(mutation('create',trip)),'invalid');
+  const saved={...row(trip),schema_version:2};assert.deepEqual(decodeCloudTrip(saved,owner).trip.days[0].items[0].freeTime,trip.days[0].items[0].freeTime);
+  const f=fixture({response:{status:'ok',trip:saved}});await f.remote.mutate({...mutation('create',trip),schemaVersion:2});
+  assert.deepEqual(f.calls.find(call=>call[0]==='rpc')[2].p_document.days[0].items[0].freeTime,trip.days[0].items[0].freeTime);
+});
 await check('booking schema cannot be mislabeled as schema1 on read or write',async()=>{
   const trip=seedTrip(); trip.flights=[]; trip.stays=[];
   assert.throws(()=>decodeCloudTrip(row(trip),owner),error=>error.code==='invalid');

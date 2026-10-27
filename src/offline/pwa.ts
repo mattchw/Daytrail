@@ -17,7 +17,19 @@ function send(worker:ServiceWorker,type:string):Promise<ShellReply>{return new P
   channel.port1.onmessage=event=>{clearTimeout(timer);channel.port1.close();resolve(event.data);};worker.postMessage({type},[channel.port2]);
 });}
 export function registerOfflineShell(production:boolean):Promise<void>{
-  if(!production){emit({supported:false,ready:false,error:'Offline launch is available in the production build.'});return Promise.resolve();}
+  if(!production){
+    emit({supported:false,ready:false,updateAvailable:false,error:'Offline launch is available in the production build.'});
+    return (async()=>{try{
+      if(typeof navigator==='undefined'||!('serviceWorker' in navigator)||typeof isSecureContext==='undefined'||!isSecureContext||typeof location==='undefined')return;
+      const workers=navigator.serviceWorker;if(typeof workers.getRegistration!=='function')return;
+      const scope=new URL('/',location.href).href,script=new URL('/sw.js',location.href).href;
+      const existing=await workers.getRegistration(scope);
+      if(!existing||existing.scope!==scope)return;
+      const scripts=[existing.active,existing.waiting,existing.installing].filter((worker):worker is ServiceWorker=>!!worker);
+      // Remove only Daytrail's own root registration; saved offline data stays intact.
+      if(scripts.length&&scripts.every(worker=>worker.scriptURL===script))await existing.unregister();
+    }catch{/* Development still opens when service-worker cleanup is unavailable. */}})();
+  }
   if(!snapshot.supported)return Promise.resolve();
   return starting??=(async()=>{try{
     registration=await navigator.serviceWorker.register('/sw.js',{scope:'/',updateViaCache:'none'});

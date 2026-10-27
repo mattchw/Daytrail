@@ -48,8 +48,16 @@ export interface Journey {
   flight?: { id: string; departureMs: number; arrivalMs: number; departureGoalMs: number; arrivalReadyMs: number };
 }
 
+export type FreeTimeKind = 'explore' | 'rest' | 'shopping' | 'nothing';
+export interface FreeTime { id: string; kind: FreeTimeKind; duration: number; untilBooking: boolean }
+export interface ScheduledFreeTime extends FreeTime {
+  start: number; end: number; requestedDuration: number;
+  bookingId?: string; bookingName?: string; approx: boolean; warning?: string;
+}
 export interface Activity {
   aid: string;
+  /** Stays beside this visit when reordered; never creates a location or route. */
+  freeTime?: FreeTime;
   placeId: string;
   duration: number;
   fixed: number | null;
@@ -322,6 +330,7 @@ export interface ScheduleRow {
   late: number;
   approx: boolean;
   flight?: FlightSegment;
+  freeTime?: ScheduledFreeTime;
   /** Place-local hours window, converted after crossing zones by flight. */
   visitWindow?: { date: string; start: number; end: number; approx: boolean };
 }
@@ -331,7 +340,7 @@ export function scheduleVisitWindow(row: ScheduleRow, date: string): { date: str
 }
 
 export interface ScheduleContext { trip: Trip; dayIndex: number }
-export function schedule(day: Day, places: Record<string, Place>, legs?: Record<string, Journey>, context?: ScheduleContext): {
+export interface ScheduleResult {
   rows: ScheduleRow[];
   endLeg: Journey;
   travel: number;
@@ -340,7 +349,10 @@ export function schedule(day: Day, places: Record<string, Place>, legs?: Record<
   wait: number;
   finish: number;
   finishApprox: boolean;
-} {
+}
+/** Core pass used by opening-hours and free-time solvers. Visit ends remain visit-only. */
+export function scheduleRaw(day: Day, places: Record<string, Place>, legs?: Record<string, Journey>, context?: ScheduleContext,
+  freeDurations: Record<string, number> = {}): ScheduleResult {
   const destination = dayEndPlace(day, places);
   const incomingIssue = context ? incomingFlightStartIssue(context.trip, context.dayIndex) : null;
   const journey = (key: string, from: Place, to: Place, mode: Mode, flightId?: string): Journey => {
@@ -370,6 +382,17 @@ export function schedule(day: Day, places: Record<string, Place>, legs?: Record<
   let physicalInstant = context ? instantAtDayMinutes(scheduleDate, time, scheduleZone) : null;
   let previousArrivalInstant = physicalInstant;
   let previousArrivalMinutes = time;
+  const addFreeTime = (row: ScheduleRow): ScheduleRow => {
+    const free = row.it.freeTime;
+    if (!free) return row;
+    const duration = freeDurations[free.id] ?? free.duration;
+    const start = row.physicalEnd;
+    if (physicalInstant !== null) physicalInstant += duration * 60000;
+    const end = physicalInstant !== null && context ? dayMinutesAt(physicalInstant, scheduleDate, scheduleZone) : start + duration;
+    row.freeTime = { ...free, requestedDuration: free.duration, start, end, duration, approx: row.approx };
+    time = end;
+    return row;
+  };
   const rows = day.items.map((it): ScheduleRow => {
     const pl = places[it.placeId];
     if (!pl) throw new Error(`Unknown place: ${it.placeId}`);
@@ -395,7 +418,7 @@ export function schedule(day: Day, places: Record<string, Place>, legs?: Record<
       previousArrivalMinutes = ready;
       placeZone = row.flight?.arrival.timezone ?? scheduleZone;
       time = row.physicalEnd; previous = pl; late += rowLate; wait += rowWait;
-      return row;
+      return addFreeTime(row);
     }
     let arrive = time + (leg.min ?? 0);
     let start = it.fixed ?? arrive;
@@ -434,7 +457,7 @@ export function schedule(day: Day, places: Record<string, Place>, legs?: Record<
     previous = pl;
     late += rowLate;
     wait += rowWait;
-    return row;
+    return addFreeTime(row);
   });
   const endLeg: Journey = hasEndJourney(day)
     ? journey('return', previous, destination, day.endMode, day.endFlightId)
@@ -456,6 +479,65 @@ export function schedule(day: Day, places: Record<string, Place>, legs?: Record<
     finish = dayMinutesAt(endLeg.flight.arrivalReadyMs, date, timezone);
   }
   return { rows, endLeg, travel: travelMinutes, unknown, late, wait, finish, finishApprox: uncertain };
+}
+
+/** Locate an actual booking, excluding opening-hour waits used during calculation. */
+export function nextFreeTimeBooking(day: Day, afterIndex: number): { index: number; id: string } | null {
+  const index = day.items.findIndex((item, i) => i > afterIndex && (item.fixed !== null || item.mode === 'flight' || Boolean(item.departureForFlightId)));
+  return index >= 0 ? { index, id: day.items[index].aid }
+    : day.endMode === 'flight' && day.endFlightId ? { index: day.items.length, id: day.endFlightId } : null;
+}
+/** Fill spare time only when known journeys prove the next booking stays reachable.
+ * Re-run the full clock for each candidate so opening waits, zones and flights agree.
+ */
+export function resolveFreeTimeSchedule<T extends ScheduleResult>(day: Day, calculate: (durations: Record<string, number>) => T,
+  safe: (before: T, after: T, from: number, through: number) => boolean = () => true): T {
+  const durations: Record<string, number> = {};
+  day.items.forEach(item => { if (item.freeTime) durations[item.freeTime.id] = item.freeTime.untilBooking ? 0 : item.freeTime.duration; });
+  let result = calculate(durations);
+  const annotations = new Map<string, Pick<ScheduledFreeTime, 'bookingId' | 'bookingName' | 'warning' | 'approx'>>();
+  day.items.forEach((item, index) => {
+    const free = item.freeTime;
+    if (!free?.untilBooking) return;
+    const target = nextFreeTimeBooking(day, index), row = result.rows[index];
+    if (!target) {
+      durations[free.id] = free.duration;
+      annotations.set(free.id, { approx: row.approx, warning: 'No upcoming booking. Using your chosen length.' });
+      result = calculate(durations); return;
+    }
+    const booking = result.rows[target.index];
+    const metadata = { bookingId: target.id, bookingName: booking?.pl.name ?? 'your flight' };
+    const affected = result.rows.slice(index, target.index + 1);
+    if (affected.some(value => value.approx || value.leg.min === null)
+      || target.index === day.items.length && (result.endLeg.min === null || result.finishApprox)) {
+      durations[free.id] = free.duration;
+      annotations.set(free.id, { ...metadata, approx: true, warning: 'Confirm travel times to know how much free time fits.' });
+      result = calculate(durations); return;
+    }
+    const baseline = result;
+    const allowed = (candidate: T) => candidate.rows.slice(index + 1, target.index + 1).every((value, offset) =>
+      !value.approx && value.late <= baseline.rows[index + 1 + offset].late)
+      && (target.index < day.items.length || !candidate.finishApprox && candidate.late <= baseline.late)
+      && safe(baseline, candidate, index, target.index);
+    // A missed booking cannot become spare time simply because extra minutes do not
+    // increase a pre-existing warning (for example an already missed flight).
+    const alreadyLate = affected.slice(1).some(value => value.late > 0);
+    let low = 0, high = alreadyLate ? 0 : 720;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      const candidate = calculate({ ...durations, [free.id]: mid });
+      if (allowed(candidate)) low = mid; else high = mid - 1;
+    }
+    durations[free.id] = low;
+    annotations.set(free.id, { ...metadata, approx: false,
+      ...(low < 10 ? { warning: low === 0 ? 'No free time remains before this booking.' : 'Less than 10 minutes of free time remain.' } : {}) });
+    result = calculate(durations);
+  });
+  return { ...result, rows: result.rows.map(row => row.freeTime ? { ...row, freeTime: { ...row.freeTime, ...annotations.get(row.freeTime.id) } } : row) };
+}
+export function schedule(day: Day, places: Record<string, Place>, legs?: Record<string, Journey>, context?: ScheduleContext): ScheduleResult {
+  if (!day.items.some(item => item.freeTime?.untilBooking)) return scheduleRaw(day, places, legs, context);
+  return resolveFreeTimeSchedule(day, durations => scheduleRaw(day, places, legs, context, durations));
 }
 
 /** Enumerates at most 8! alternatives; bookings split the day into uncrossable runs. */
@@ -599,6 +681,7 @@ export function isTrip(value: unknown): value is Trip {
   if (value.ideas.some(id => !knownPlace(id) || id === 'hotel') || new Set(value.ideas).size !== value.ideas.length) return false;
   const dayIds = new Set<string>();
   const activityIds = new Set<string>();
+  const freeTimeIds = new Set<string>();
   for (const day of value.days) {
     if (!isRecord(day) || !isId(day.id) || dayIds.has(day.id) || !isText(day.label, 80, true)
       || !isText(day.date, 80, true) || !isText(day.title, 160) || !isMode(day.endMode)
@@ -623,6 +706,14 @@ export function isTrip(value: unknown): value is Trip {
       if ((item.meal !== undefined && !['meal','snack','none'].includes(String(item.meal)))
         || (item.walkingMeters !== undefined && !isInteger(item.walkingMeters,0,100000))
         || (item.exposure !== undefined && !['indoor','outdoor','mixed','unknown'].includes(String(item.exposure)))) return false;
+      if (item.freeTime !== undefined) {
+        const free = item.freeTime;
+        if (!isRecord(free) || !exactKeys(free, ['id','kind','duration','untilBooking'])
+          || !isId(free.id) || freeTimeIds.has(free.id)
+          || !['explore','rest','shopping','nothing'].includes(String(free.kind))
+          || !isInteger(free.duration, 15, 720) || free.duration % 15 !== 0 || typeof free.untilBooking !== 'boolean') return false;
+        freeTimeIds.add(free.id);
+      }
       activityIds.add(item.aid);
       if (item.mode === 'flight' ? !validFlightLink(item.flightId, previousId, item.placeId) : item.flightId !== undefined) return false;
       if (item.departureForFlightId !== undefined && (item.mode === 'flight' || !isId(item.departureForFlightId)
@@ -801,7 +892,7 @@ function priorDayContinuesIncomingFlight(trip: Trip, dayIndex: number, flight: F
     || !Object.hasOwn(places, from) || !Object.hasOwn(places, landing.placeId)
     || initial.status !== 'ready' || initial.arrivalReadyMs === null
     || !Number.isFinite(landing.duration) || landing.duration < 0) return false;
-  let earliestFinish = initial.arrivalReadyMs + landing.duration * 60000;
+  let earliestFinish = initial.arrivalReadyMs + (landing.duration + (landing.freeTime && !landing.freeTime.untilBooking ? landing.freeTime.duration : 0)) * 60000;
   let earliestArrival = initial.arrivalReadyMs;
   let previousPlaceId = landing.placeId, hasGroundContinuation = false;
   const usedFlights = new Set([flight.id]);
@@ -827,6 +918,7 @@ function priorDayContinuesIncomingFlight(trip: Trip, dayIndex: number, flight: F
       earliestArrival = earliestFinish;
       earliestFinish = Math.max(earliestFinish, fixed ?? -Infinity) + (anchor ? anchor.airportBufferMinutes ?? 120 : item.duration) * 60000;
     }
+    if (item.freeTime && !item.freeTime.untilBooking) earliestFinish += item.freeTime.duration * 60000;
     previousPlaceId = item.placeId;
   }
   const endPlaceId = prior.endPlaceId ?? 'hotel';

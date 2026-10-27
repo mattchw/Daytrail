@@ -19,7 +19,7 @@ const escape = (key:string)=>key.replaceAll('~','~0').replaceAll('/','~1');
 /** Stable-ID three-way merge. Array positions are never entity identities. */
 export function mergeTrips(base:Trip,local:Trip,remote:Trip,choices:ConflictChoices={}):{trip:Trip;conflicts:MergeConflict[]} {
   const conflicts:MergeConflict[]=[];
-  const names:Record<string,string>={pace:'Walking pace',meal:'Meal intent',walkingMeters:'Walking during visit',exposure:'Indoor or outdoor',name:'Trip name',title:'Day title',destination:'Destination',startDate:'Trip dates',timezone:'Time zone',note:'Notes',duration:'Visit duration',fixed:'Arrival time',mode:'Travel mode',startTime:'Day start time',finishBy:'Preferred finish time',startPlaceId:'Starting point',endPlaceId:'End point',endMode:'Final travel mode',startStayId:'Starting accommodation',endStayId:'Ending accommodation',endFlightId:'Final flight',flightId:'Linked flight',departureForFlightId:'Airport check-in',bookingReference:'Private booking reference',privateNotes:'Private booking notes',contact:'Private contact',bookingUrl:'Private booking link',departure:'Departure',arrival:'Arrival',time:'Local time',date:'Date',checkInDate:'Check-in date',checkOutDate:'Check-out date',checkInTime:'Check-in time',checkOutTime:'Check-out time',airportBufferMinutes:'Airport buffer',arrivalBufferMinutes:'Arrival buffer'};
+  const names:Record<string,string>={freeTime:'Free time',kind:'Free time kind',untilBooking:'Until the next booking',pace:'Walking pace',meal:'Meal intent',walkingMeters:'Walking during visit',exposure:'Indoor or outdoor',name:'Trip name',title:'Day title',destination:'Destination',startDate:'Trip dates',timezone:'Time zone',note:'Notes',duration:'Visit duration',fixed:'Arrival time',mode:'Travel mode',startTime:'Day start time',finishBy:'Preferred finish time',startPlaceId:'Starting point',endPlaceId:'End point',endMode:'Final travel mode',startStayId:'Starting accommodation',endStayId:'Ending accommodation',endFlightId:'Final flight',flightId:'Linked flight',departureForFlightId:'Airport check-in',bookingReference:'Private booking reference',privateNotes:'Private booking notes',contact:'Private contact',bookingUrl:'Private booking link',departure:'Departure',arrival:'Arrival',time:'Local time',date:'Date',checkInDate:'Check-in date',checkOutDate:'Check-out date',checkInTime:'Check-in time',checkOutTime:'Check-out time',airportBufferMinutes:'Airport buffer',arrivalBufferMinutes:'Arrival buffer'};
   const placeName=(id:string)=>local.customPlaces[id]?.userLabel||local.customPlaces[id]?.name||remote.customPlaces[id]?.userLabel||remote.customPlaces[id]?.name||PLACES[id]?.name||id.replaceAll('-',' ');
   const label=(path:string)=>{
     const parts=path.split('/').filter(Boolean).map(part=>part.replaceAll('~1','/').replaceAll('~0','~'));
@@ -31,7 +31,7 @@ export function mergeTrips(base:Trip,local:Trip,remote:Trip,choices:ConflictChoi
       if(field==='$order')return `${dayName} · Stop order`;
       if(parts[2]==='items'){
         const item=[...day.items,...base.days.flatMap(value=>value.items),...remote.days.flatMap(value=>value.items)].find(item=>item.aid===parts[3]);
-        return `${dayName} · ${item?placeName(item.placeId):'Place'}${parts.length>4?' · '+(names[field]||field):''}`;
+        return `${dayName} · ${item?placeName(item.placeId):'Place'}${parts.length>4?' · '+(parts.includes('freeTime') && field==='duration'?'Free time length':names[field]||field):''}`;
       }
       return `${dayName} · ${names[field]||'Day details'}`;
     }
@@ -179,7 +179,7 @@ export function keepSavedStructure(base:Trip,local:Trip,remote:Trip,choices:Conf
   safe.days=base.days.map(original=>{
     const edited=local.days.find(day=>day.id===original.id);if(!edited)return clone(original);
     const next=hasFlight(original)||hasFlight(edited)?{...clone(original),title:edited.title,items:original.items.map(item=>{
-      const changed=edited.items.find(value=>value.aid===item.aid);return changed?{...clone(item),note:changed.note,duration:changed.duration,fixed:changed.fixed}:clone(item);
+      const changed=edited.items.find(value=>value.aid===item.aid);return changed?{...clone(item),note:changed.note,duration:changed.duration,fixed:changed.fixed,freeTime:clone(changed.freeTime)}:clone(item);
     })}:clone(edited);
     for(const key of ['date','label','startPlaceId','endPlaceId','startStayId','endStayId','endFlightId'] as const){
       if(original[key]===undefined)delete next[key];else (next as unknown as Record<string,unknown>)[key]=original[key];

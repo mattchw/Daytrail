@@ -415,3 +415,9 @@
 .dt-today-booking-address .dt-travel-link{margin-top:4px}
 /* Today owns one scroll container; prevent the page behind it from also scrolling. */
 html:has(.dt-travel),body:has(.dt-travel){overflow:hidden}
+
+/* Free time belongs to the previous place and never draws a new map stop. */
+.dt-today-free-now {border-style:dashed;background:#f6f5ec;}
+.dt-travel-stops .dt-today-free-row .dt-travel-stop-copy {border:1px dashed #c3cbb9;border-radius:14px;padding:14px;background:#f7f6ee;}
+.dt-today-free-row .dt-travel-stop-label strong {color:#58664f;}
+.dt-today-free-row .dt-travel-stop-time {color:#67755e;}

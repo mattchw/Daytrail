@@ -55,6 +55,16 @@ await check('real journeys produce a checked arrival and exact return', () => {
   assert.equal(result.hoursUnknownCount, 0);
   assert.equal(result.status, 'ready');
 });
+await check('overview includes free time in finish without another route, stop or venue-hours check', () => {
+  const result=summary(day({items:[item('temple',{freeTime:{id:'free-temple',kind:'explore',duration:60,untilBooking:false}})]}));
+  assert.equal(result.sc.rows.length,1);assert.equal(result.sc.travel,20);assert.equal(result.sc.finish,680);assert.equal(result.sc.rows[0].freeTime.duration,60);
+  assert.equal(result.hoursCheckedCount,1);assert.equal(result.visitChecks.temple.status,'fits');assert.equal(result.status,'ready');
+});
+await check('overview shows the resolved free window before a fixed booking', () => {
+  const plan=day({items:[item('temple',{freeTime:{id:'free-temple',kind:'rest',duration:60,untilBooking:true}}),item('museum',{fixed:650})]});
+  const result=summary(plan,data({legs:{temple:ready(),museum:ready(),return:ready()},hours:{'google-temple':hours(),'google-museum':hours()}}));
+  assert.equal(result.sc.rows[0].freeTime.duration,30);assert.equal(result.sc.rows[1].start,650);assert.equal(result.sc.rows[1].late,0);assert.equal(result.hoursCheckedCount,2);
+});
 await check('overview includes opening waits in later arrivals and final arrival', () => {
   const later=hours({currentHours:{periods:[period(1,10,17)],weekdayDescriptions:[]}});
   const result=summary(day({items:[item('temple'),item('museum')]}),data({

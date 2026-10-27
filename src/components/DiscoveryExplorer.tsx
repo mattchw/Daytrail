@@ -1,5 +1,5 @@
 import {useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent} from 'react';
-import {ArrowLeft, ArrowRight, Bookmark, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Coffee, Compass, ExternalLink, Landmark, LoaderCircle, MapPin, Plus, Search, Star, Umbrella, Utensils, X} from 'lucide-react';
+import {ArrowDown, ArrowLeft, ArrowRight, Beer, Bookmark, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Coffee, Compass, ExternalLink, Landmark, LoaderCircle, MapPin, Plus, Search, ShoppingBag, Star, TreePine, Umbrella, Utensils, X} from 'lucide-react';
 import type {Place} from '../model';
 import {getWeekdayHoursLabel} from '../openingHours';
 import {withPlaceAdmission} from '../placeHours';
@@ -17,6 +17,10 @@ export type DiscoveryExplorerProps = {
   onCategory: (category: DiscoveryCategory) => void;
   results: DiscoveryResult[];
   loading: boolean;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  moreError?: string;
+  onLoadMore?: () => void;
   error: string;
   searched: boolean;
   scope: 'destination' | 'area';
@@ -42,10 +46,12 @@ export type DiscoveryExplorerProps = {
 const filters: {value: DiscoveryCategory; label: string; icon: typeof Compass}[] = [
   {value:'all',label:'All',icon:Compass},
   {value:'attractions',label:'Attractions',icon:MapPin},
-  {value:'temples',label:'Temples',icon:Landmark},
   {value:'museums',label:'Museums',icon:Landmark},
+  {value:'parks',label:'Parks',icon:TreePine},
   {value:'restaurants',label:'Restaurants',icon:Utensils},
   {value:'cafes',label:'Cafés',icon:Coffee},
+  {value:'shopping',label:'Shopping',icon:ShoppingBag},
+  {value:'nightlife',label:'Bars & pubs',icon:Beer},
   {value:'indoor',label:'Indoor ideas',icon:Umbrella},
 ];
 
@@ -177,6 +183,24 @@ function LoadingCards() {
   return <><p className="dx-loading-label" role="status"><LoaderCircle size={15} className="spin"/>Finding your next favourite…</p>{[0,1,2].map(index=><div className="dx-card dx-skeleton" key={index} aria-hidden="true"><span/><div><i/><i/><i/></div><b/></div>)}</>;
 }
 
+function MoreResults({props,onLoadMore}: {props:DiscoveryExplorerProps;onLoadMore:()=>void}) {
+  if (props.hasMore===undefined&&!props.loadingMore&&!props.moreError) return null;
+  const canLoadMore=Boolean(props.onLoadMore&&(props.hasMore||props.moreError||props.loadingMore));
+  return <div className="dx-more-results" aria-label="More discovery results">
+    {props.moreError&&!props.loadingMore&&<p className="dx-more-error" role="alert">{props.moreError}</p>}
+    {canLoadMore?<>
+      <button type="button" className="button dx-more-button" onClick={onLoadMore} disabled={props.loadingMore}>
+        {props.loadingMore?<LoaderCircle size={15} className="spin" aria-hidden="true"/>:<ArrowDown size={15} aria-hidden="true"/>}
+        {props.loadingMore?'Loading more places…':props.moreError?'Try loading more places again':'Show more places'}
+      </button>
+      <p className="dx-more-hint" role="status">{props.loadingMore?'Your places stay here while more load.':'Explore more when you’re ready.'}</p>
+    </>:props.hasMore===false&&props.results.length>0?<div className="dx-results-end">
+      <Check size={16} aria-hidden="true"/><strong>You’ve reached the end of these results.</strong>
+      <p>Try another category or search a different area on the map.</p>
+    </div>:null}
+  </div>;
+}
+
 export default function DiscoveryExplorer(props:DiscoveryExplorerProps) {
   const inputId=useId(),list=useRef<HTMLDivElement>(null),listTitle=useRef<HTMLParagraphElement>(null);
   const [now,setNow]=useState(()=>new Date());
@@ -214,6 +238,13 @@ export default function DiscoveryExplorer(props:DiscoveryExplorerProps) {
     return ()=>{cancelAnimationFrame(frame);observer?.disconnect();restoringScroll.current=false;};
   },[!!props.selectedResult,resultsKey,props.loading]);
   const select=(result:DiscoveryResult)=>{props.onScrollTop(list.current?.scrollTop??0);props.onSelect(result);};
+  function loadMore(){
+    if(props.loadingMore||!props.onLoadMore)return;
+    props.onScrollTop(list.current?.scrollTop??props.scrollTop);
+    // Keep the scroll surface focused as new cards appear before the footer.
+    list.current?.focus({preventScroll:true});
+    props.onLoadMore();
+  }
   function submit(event:FormEvent){event.preventDefault();props.onScrollTop(0);props.onSearch();}
   const city=props.destination.split(',')[0];
   return <div className={`dx-explorer ${props.selectedResult?'dx-explorer-detail':''}`}>
@@ -222,17 +253,18 @@ export default function DiscoveryExplorer(props:DiscoveryExplorerProps) {
         <div className="dx-title-row"><div><span className="dx-eyebrow">A little room to explore</span><h2>Discover {city}</h2></div>{props.onClose&&<button type="button" className="icon-button" onClick={props.onClose} aria-label="Close discovery"><X size={17}/></button>}</div>
         <form className="dx-search" onSubmit={submit}>
           <label htmlFor={inputId}>Find a place or something you love</label>
-          <div><Search size={16} aria-hidden="true"/><input id={inputId} type="search" value={props.query} onChange={event=>props.setQuery(event.target.value)} placeholder="Temples, coffee, hidden gems…" maxLength={240}/><button type="submit" aria-label="Search places" disabled={props.loading}>{props.loading?<LoaderCircle size={16} className="spin"/>:<ArrowRight size={16}/>}</button></div>
+          <div><Search size={16} aria-hidden="true"/><input id={inputId} type="search" value={props.query} onChange={event=>props.setQuery(event.target.value)} placeholder="Museums, parks, coffee…" maxLength={240}/><button type="submit" aria-label="Search places" disabled={props.loading}>{props.loading?<LoaderCircle size={16} className="spin"/>:<ArrowRight size={16}/>}</button></div>
         </form>
         <div className="dx-filters" role="group" aria-label="Place category">{filters.map(({value,label})=><button type="button" key={value} aria-pressed={props.category===value} onClick={()=>{props.onScrollTop(0);props.onCategory(value);}}>{label}</button>)}</div>
         {props.category==='indoor'&&<div className="dx-area-scope"><span><Umbrella size={12}/>Indoor ideas · check each venue’s details</span><button type="button" onClick={()=>props.onCategory('all')} aria-label="Clear indoor ideas filter"><X size={12}/>Clear</button></div>}
         {props.scope==='area'&&<div className="dx-area-scope"><span><MapPin size={12}/>{props.loading?'Searching this map area':'Results in this map area'}</span><button type="button" onClick={props.onBackToDestination}>Back to {city}</button></div>}
       </div>
-      <div className="dx-results" ref={list} tabIndex={0} role="region" aria-label="Discovery results" onScroll={event=>{if(!restoringScroll.current&&!props.loading)props.onScrollTop(event.currentTarget.scrollTop);}} aria-busy={props.loading}>
+      <div className="dx-results" ref={list} tabIndex={0} role="region" aria-label="Discovery results" onScroll={event=>{if(!restoringScroll.current&&!props.loading)props.onScrollTop(event.currentTarget.scrollTop);}} aria-busy={props.loading||props.loadingMore}>
         {props.loading?<LoadingCards/>:props.error?<div className="dx-empty" role="alert"><MapPin size={28}/><h3>A small detour</h3><p>{props.error}</p><button type="button" className="button" onClick={props.onSearch}>Try again<ArrowRight size={14}/></button></div>:props.searched?<>
           <p ref={listTitle} tabIndex={-1} className="dx-result-count" role="status">{props.results.length} {props.results.length===1?'place':'places'} to explore{props.scope==='area'?' in this area':''}</p>
           {props.results.length===0?<div className="dx-empty"><Search size={28}/><h3>No places found here</h3><p>Try a different category, a specific place name, or a wider area on the map.</p>{props.scope==='area'&&<button type="button" className="button" onClick={props.onBackToDestination}>Search {city}<ArrowRight size={14}/></button>}</div>:props.results.map(result=><ResultCard key={result.place.id} result={result} props={props} onSelect={()=>select(result)} now={now}/>)}
-        </>:<div className="dx-welcome"><span className="dx-welcome-mark"><Compass size={29}/></span><span className="dx-eyebrow">Make the day your own</span><h3>Find your next favourite.</h3><p>A quiet temple, a brilliant museum, a coffee worth the detour. Start exploring {city}.</p><div className="dx-suggestions">{filters.filter(filter=>filter.value!=='all').map(({value,label,icon:Icon})=><button type="button" key={value} onClick={()=>props.onCategory(value)}><Icon size={17}/><span>{label}</span><ArrowRight size={14}/></button>)}</div><p className="dx-map-tip"><MapPin size={13}/>Or move the map, then choose “Search this area”.</p></div>}
+          <MoreResults props={props} onLoadMore={loadMore}/>
+        </>:<div className="dx-welcome"><span className="dx-welcome-mark"><Compass size={29}/></span><span className="dx-eyebrow">Make the day your own</span><h3>Find your next favourite.</h3><p>A museum to explore, a park to unwind in, or a café worth the detour. Start exploring {city}.</p><div className="dx-suggestions">{filters.filter(filter=>filter.value!=='all').map(({value,label,icon:Icon})=><button type="button" key={value} onClick={()=>props.onCategory(value)}><Icon size={17}/><span>{label}</span><ArrowRight size={14}/></button>)}</div><p className="dx-map-tip"><MapPin size={13}/>Or move the map, then choose “Search this area”.</p></div>}
       </div>
     </>}
     <footer className="dx-footer">{!props.selectedResult&&props.onCustom&&<button type="button" className="dx-custom" onClick={props.onCustom}><Plus size={13}/>Add a custom place</button>}<span className="dx-google-brand">Google Maps</span><span className="dx-legal"><a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a><span>·</span><a href="/terms.html" target="_blank" rel="noreferrer">Terms</a></span></footer>

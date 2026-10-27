@@ -7,8 +7,9 @@ const modelURL = url(compile('../model.ts'));
 const openingURL = url(compile('../openingHours.ts'));
 const visitURL = url(compile('../visitHours.ts').replace(/from ['"]\.\/openingHours['"]/g, `from ${JSON.stringify(openingURL)}`));
 const model = await import(modelURL);
+const planningURL = url(compile('../hoursPlanning.ts').replace(/from ['\"]\.\/model['\"]/g, `from ${JSON.stringify(modelURL)}`).replace(/from ['\"]\.\/visitHours['\"]/g, `from ${JSON.stringify(visitURL)}`));
 const serviceURL = url(compile('../googleMaps.ts').replaceAll('import.meta.env', '({})'));
-const routes = await import(url(compile('../useLiveRoutes.ts').replace(/from ['"]react['"]/g, `from ${JSON.stringify(import.meta.resolve('react'))}`).replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`).replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`).replace(/from ['"]\.\/googleMaps['"]/g, `from ${JSON.stringify(serviceURL)}`)));
+const routes = await import(url(compile('../useLiveRoutes.ts').replace(/from ['"]react['"]/g, `from ${JSON.stringify(import.meta.resolve('react'))}`).replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`).replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`).replace(/from ['"]\.\/hoursPlanning['"]/g, `from ${JSON.stringify(planningURL)}`).replace(/from ['"]\.\/googleMaps['"]/g, `from ${JSON.stringify(serviceURL)}`)));
 const { computeJourney } = await import(serviceURL);
 const { isFlight, isStay, resolveFlightMoment, flightTiming, isTrip, createTrip, getPlaces, schedule, flightJourney, flightsForDay, staysForDay, accommodationSuggestions, applyAccommodationSuggestions, proposeOrder, travel } = model;
 let count = 0;
@@ -290,6 +291,10 @@ await check('uncertain arrival times and mismatched earlier flight links cannot 
 });
 await check('known post-landing visits must finish before the following day can start', () => {
   const trip=plannedMidnightTransfer();trip.days[0].items[0].duration=540;
+  assert.ok(model.incomingFlightStartIssue(trip,1));trip.days[1].startTime=600;assert.equal(model.incomingFlightStartIssue(trip,1),null);
+});
+await check('fixed free time after landing also delays the next day start', () => {
+  const trip=plannedMidnightTransfer();trip.days[0].items[0].freeTime={id:'free-landing',kind:'rest',duration:540,untilBooking:false};
   assert.ok(model.incomingFlightStartIssue(trip,1));trip.days[1].startTime=600;assert.equal(model.incomingFlightStartIssue(trip,1),null);
 });
 await check('fixed post-flight visits use the prior day zone and their actual end instant', () => {

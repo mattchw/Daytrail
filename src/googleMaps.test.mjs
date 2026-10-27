@@ -9,13 +9,14 @@ const dataURL = source => `data:text/javascript;base64,${Buffer.from(source).toS
 const modelURL = dataURL(compile('./model.ts'));
 const openingURL = dataURL(compile('./openingHours.ts'));
 const visitURL = dataURL(compile('./visitHours.ts').replace(/from ['"]\.\/openingHours['"]/g, `from ${JSON.stringify(openingURL)}`));
+const planningURL = dataURL(compile('./hoursPlanning.ts').replace(/from ['\"]\.\/model['\"]/g, `from ${JSON.stringify(modelURL)}`).replace(/from ['\"]\.\/visitHours['\"]/g, `from ${JSON.stringify(visitURL)}`));
 const serviceURL = dataURL(compile('./googleMaps.ts').replaceAll('import.meta.env', '({})'));
 const service = await import(serviceURL);
 const hookURL = dataURL(compile('./useLiveRoutes.ts')
   .replace(/from ['"]react['"]/g, `from ${JSON.stringify(import.meta.resolve('react'))}`)
   .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
   .replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`)
-  .replace(/from ['"]\.\/googleMaps['"]/g, `from ${JSON.stringify(serviceURL)}`));
+  .replace(/from ['"]\.\/hoursPlanning['"]/g, `from ${JSON.stringify(planningURL)}`).replace(/from ['"]\.\/googleMaps['"]/g, `from ${JSON.stringify(serviceURL)}`));
 const { tripDayDate, zonedDeparture, transitDateReason, calculateDayRoutes, pendingLegs, routeInputSignature, reuseReadyStaticLegs } = await import(hookURL);
 let passed = 0;
 async function check(name, test) { await test(); passed += 1; console.log(`✓ ${name}`); }

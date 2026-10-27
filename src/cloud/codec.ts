@@ -34,7 +34,7 @@ export function canonicalCloudTrip(value: unknown): Trip {
 export function usesBookingSchema(trip:Trip):boolean {
   return trip.flights !== undefined || trip.stays !== undefined || trip.days.some(day =>
     day.timezone !== undefined || day.startStayId !== undefined || day.endStayId !== undefined || day.endFlightId !== undefined
-    || day.endMode === 'flight' || day.items.some(item => item.flightId !== undefined || item.departureForFlightId !== undefined || item.mode === 'flight'));
+    || day.endMode === 'flight' || day.items.some(item => item.freeTime !== undefined || item.flightId !== undefined || item.departureForFlightId !== undefined || item.mode === 'flight'));
 }
 
 /** Canonical JSON is enough for local equality; the database hashes requests itself. */

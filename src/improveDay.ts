@@ -96,7 +96,7 @@ export function signature(input: ImproveInput): string {
     tripId: input.tripId, date: input.date, timezone: input.timezone, dayId: day.id,
     startTime: dayStartTime(day), finishBy: day.finishBy ?? null,
     startPlaceId: day.startPlaceId ?? 'hotel', endPlaceId: day.endPlaceId ?? 'hotel', endMode: day.endMode,
-    items: day.items.map(({ aid, placeId, duration, fixed, mode }) => ({ aid, placeId, duration, fixed, mode })),
+    items: day.items.map(({ aid, placeId, duration, fixed, mode, freeTime }) => ({ aid, placeId, duration, fixed, mode, freeTime })),
     places: ids.map(id => ({ id, googlePlaceId: places[id]?.googlePlaceId ?? null, lat: places[id]?.lat ?? null, lng: places[id]?.lng ?? null })),
     hours: [...new Set(day.items.map(item => item.placeId))].sort().map(id => [id, input.hours[id] ?? null]),
     locks: [...new Set(input.locks)].filter(id => activityIds.has(id)).sort(),
@@ -210,7 +210,7 @@ export async function searchOrders(input: ImproveInput, matrix: ImproveMatrix, c
   return best;
 }
 
-/** Reorder IDs against current objects so changes to notes cannot be overwritten. */
+/** Reorder whole stop objects: attached free time follows its place, and newer notes survive. */
 export function applyOrder(day: Day, order: string[]): Day {
   const byId = new Map(day.items.map(item => [item.aid, item]));
   if (byId.size !== day.items.length || order.length !== day.items.length || new Set(order).size !== order.length
