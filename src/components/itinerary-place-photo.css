@@ -1,0 +1,22 @@
+.activity-card .activity-visual{position:relative;flex:none;width:68px;margin:3px 0 0 3px}
+.itinerary-place-photo{position:relative;display:block;isolation:isolate;overflow:hidden;width:68px;height:68px;border-radius:10px;background:#e7ece2}
+.itinerary-photo-fallback{display:grid;place-items:center;position:absolute;inset:0;background:linear-gradient(145deg,#edf1e7,#dfe9df);color:#789580}
+.itinerary-place-photo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .18s ease}
+.itinerary-place-photo.is-loaded img{opacity:1}
+.activity-card .activity-visual .stop-number{position:absolute;left:-5px;top:-5px;z-index:1;width:23px;height:23px;box-shadow:0 0 0 2px var(--paper);font-size:11px}
+.activity-card .activity-select{gap:12px}
+.activity-card .activity-summary{overflow-wrap:anywhere}
+.activity-card .activity-summary>strong{line-height:1.4}
+.itinerary-photo-credit{display:flex;align-items:baseline;gap:5px;margin:-3px 14px 9px 32px;color:#748071;font-size:9px;line-height:1.5;overflow-wrap:anywhere}
+.itinerary-photo-credit>svg{flex:none;align-self:flex-start;margin-top:2px}
+.itinerary-photo-credit a{color:inherit;text-underline-offset:2px}
+.itinerary-photo-provider{font-size:12px;white-space:nowrap;font-weight:500;letter-spacing:0}
+.read-only .itinerary-photo-credit{margin-left:16px}
+@media(max-width:760px){
+  .activity-card .activity-visual,.itinerary-place-photo{width:60px}
+  .itinerary-place-photo{height:60px;border-radius:9px}
+  .activity-card .activity-select{gap:11px}
+  .activity-card .activity-summary>strong{font-size:14px}
+  .itinerary-photo-credit{margin-left:26px;font-size:9px}
+}
+@media(prefers-reduced-motion:reduce){.itinerary-place-photo img{transition:none}}

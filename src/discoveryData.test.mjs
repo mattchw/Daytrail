@@ -132,6 +132,7 @@ class FakePlace {
     if (id === 'primary-cafe') { this.primaryType = 'cafe'; this.types = ['cafe', 'tourist_attraction']; }
     if (id === 'primary-lodging') { this.primaryType = 'hotel'; this.types = ['hotel', 'restaurant']; }
     if (id === 'secondary-cafe') this.types = ['cafe'];
+    if (id === 'thumbnail-no-photo') this.photos = [];
   }
   static async searchByText(request) {
     throw new Error('Paginated discovery must use REST, not the unpaged SDK search.');
@@ -361,6 +362,75 @@ try {
     const before = detailCalls;
     for (const id of ['bad id', '../x', 'x'.repeat(513)]) await assert.rejects(() => service.fetchDiscoveryDetails(id), /invalid Google Maps ID/);
     assert.equal(detailCalls, before);
+  });
+  await check('itinerary thumbnails reuse current Discover and detail metadata without a second lookup', async () => {
+    const page = await service.searchDiscoveryPage('thumbnail reuse', 'Kyoto');
+    const first = page.results[0], before = detailCalls;
+    assert.equal(service.getCachedItineraryPhoto(first.place.googlePlaceId), first.info.photos[0]);
+    assert.equal(await service.fetchItineraryPhoto(first.place.googlePlaceId), first.info.photos[0]);
+    assert.equal(detailCalls, before);
+    const detail = await service.fetchDiscoveryDetails('thumbnail-detail-reuse');
+    const after = detailCalls;
+    assert.equal(await service.fetchItineraryPhoto('thumbnail-detail-reuse'), detail.info.photos[0]);
+    assert.equal(detailCalls, after);
+  });
+  await check('itinerary thumbnails request only photos once and retain author credits without resolving an image', async () => {
+    const before = detailCalls, beforePhotos = photoCalls;
+    const first = service.fetchItineraryPhoto('thumbnail-only');
+    const second = service.fetchItineraryPhoto('thumbnail-only');
+    assert.equal(first, second, 'concurrent cards share one in-flight request');
+    const photo = await first;
+    assert.equal(detailCalls, before + 1);
+    assert.deepEqual(fetchRequests.at(-1).fields, ['photos']);
+    assert.equal(photoCalls, beforePhotos, 'loading metadata must not load a media URL');
+    assert.equal(photo.authors[0].name, 'Photographer 1');
+    assert.equal(photo.authors[0].uri, 'https://example.com/author');
+    assert.equal(photo.authors[1].uri, undefined);
+    assert.equal(service.getCachedItineraryPhoto('thumbnail-only'), photo);
+    assert.equal(await service.fetchItineraryPhoto('thumbnail-only'), photo);
+    assert.equal(detailCalls, before + 1);
+  });
+  await check('a pending full detail request also supplies the itinerary thumbnail without extra traffic', async () => {
+    const before = detailCalls;
+    const details = service.fetchDiscoveryDetails('thumbnail-pending-details');
+    const thumbnail = service.fetchItineraryPhoto('thumbnail-pending-details');
+    const [detail, photo] = await Promise.all([details, thumbnail]);
+    assert.equal(photo, detail.info.photos[0]);
+    assert.equal(detailCalls, before + 1);
+  });
+  await check('places without photos and invalid IDs avoid repeat or unnecessary provider requests', async () => {
+    const before = detailCalls;
+    assert.equal(await service.fetchItineraryPhoto('thumbnail-no-photo'), undefined);
+    assert.equal(await service.fetchItineraryPhoto('thumbnail-no-photo'), undefined);
+    assert.equal(service.getCachedItineraryPhoto('thumbnail-no-photo'), undefined);
+    assert.equal(detailCalls, before + 1);
+    for (const id of ['', undefined, null, 'bad id', '../x', 'x'.repeat(513)]) {
+      await assert.rejects(() => service.fetchItineraryPhoto(id), /invalid Google Maps ID/);
+    }
+    assert.equal(detailCalls, before + 1);
+  });
+  await check('failed thumbnail requests are retriable and expiry triggers fresh photo metadata', async () => {
+    rejectDetail = true;
+    await assert.rejects(() => service.fetchItineraryPhoto('thumbnail-retry'), error => /could not be found/.test(error.message) && !/do-not-expose/.test(error.message));
+    rejectDetail = false;
+    const before = detailCalls;
+    const first = await service.fetchItineraryPhoto('thumbnail-retry');
+    assert.ok(first);
+    assert.equal(detailCalls, before + 1);
+    mockedNow += 6 * 60_000;
+    assert.equal(service.getCachedItineraryPhoto('thumbnail-retry'), undefined);
+    const next = await service.fetchItineraryPhoto('thumbnail-retry');
+    assert.notEqual(next.key, first.key);
+    assert.equal(detailCalls, before + 2);
+  });
+  await check('thumbnail response retention is bounded when many places are viewed', async () => {
+    await service.fetchItineraryPhoto('thumbnail-bound-first');
+    for (let index = 0; index < 100; index++) await service.fetchItineraryPhoto(`thumbnail-bound-${index}`);
+    assert.equal(service.getCachedItineraryPhoto('thumbnail-bound-first'), undefined);
+    assert.ok(service.getCachedItineraryPhoto('thumbnail-bound-99'));
+    const before = detailCalls;
+    await service.fetchItineraryPhoto('thumbnail-bound-first');
+    assert.equal(detailCalls, before + 1);
   });
 } finally {
   Date.now = realNow;

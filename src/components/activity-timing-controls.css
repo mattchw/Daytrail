@@ -1,0 +1,11 @@
+.activity-timing-controls{padding-bottom:13px;margin-bottom:15px;border-bottom:1px solid var(--border)}
+.activity-timing-controls .editor-row:first-child{margin-top:0}
+.activity-timing-controls .editor-row:last-child{margin-bottom:0}
+.activity-timing-controls .duration-stepper{display:grid;grid-template-columns:36px 88px 36px;gap:6px;align-items:center}
+.activity-timing-controls .duration-stepper button{width:36px;height:36px;min-height:36px;padding:0}
+.activity-timing-controls .duration-stepper output{display:block;min-width:0;width:88px;text-align:center;white-space:nowrap;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+@media(max-width:760px){
+  .activity-timing-controls .duration-stepper{grid-template-columns:44px 88px 44px}
+  .activity-timing-controls .duration-stepper button{width:44px;height:44px;min-height:44px}
+  .activity-timing-controls .duration-stepper output{font-size:14px}
+}

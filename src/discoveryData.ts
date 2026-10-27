@@ -33,6 +33,8 @@ const searchCache = new Map<string, CacheEntry<DiscoverySearchPage>>();
 // Detail responses never reuse the intentionally smaller card response.
 const detailCache = new Map<string, CacheEntry<DiscoveryResult>>();
 const visitHoursCache = new Map<string, CacheEntry<OpeningInfo>>();
+// Current-page thumbnail responses only: never written into a saved Place or offline storage.
+const itineraryPhotoCache = new Map<string, CacheEntry<DiscoveryPhoto | undefined> & { photo?: DiscoveryPhoto }>();
 const photoHandles = new Map<string, { at: number; photo: google.maps.places.Photo; urls: Map<number, string> }>();
 let photoSequence = 0;
 const baseFields = ['id', 'displayName', 'location', 'formattedAddress', 'googleMapsURI', 'types', 'attributions'];
@@ -108,6 +110,16 @@ function photoDescriptor(photo: google.maps.places.Photo): DiscoveryPhoto {
     authors: (photo.authorAttributions ?? []).filter(author => author.displayName).map(author => ({ name: author.displayName.slice(0, 300), uri: safeURL(author.uri) })),
   };
 }
+function rememberItineraryPhoto(googleId: string, photo: DiscoveryPhoto | undefined): void {
+  itineraryPhotoCache.delete(googleId);
+  while (itineraryPhotoCache.size >= CACHE_LIMIT) itineraryPhotoCache.delete(itineraryPhotoCache.keys().next().value!);
+  itineraryPhotoCache.set(googleId, { at: Date.now(), photo, promise: Promise.resolve(photo) });
+}
+/** A recent Discover/detail response can supply a thumbnail without a second Place request. */
+export function getCachedItineraryPhoto(googleId: string): DiscoveryPhoto | undefined {
+  const entry = itineraryPhotoCache.get(googleId);
+  return entry && Date.now() - entry.at < CACHE_MS ? entry.photo : undefined;
+}
 /** Call only when a visible thumbnail or detail image is needed. No provider URL is persisted. */
 export function getDiscoveryPhotoURL(photo: DiscoveryPhoto, maxWidth = 400): string | undefined {
   const entry = photoHandles.get(photo.key);
@@ -130,6 +142,8 @@ async function normalize(value: google.maps.places.Place, details = false): Prom
     const lodging = /(?:^|_)(?:lodging|hotel|hostel|motel|resort|guest_house|bed_and_breakfast)(?:_|$)/.test(value.primaryType);
     place.cat = food ? 'food' : lodging ? 'custom' : 'attr';
   }
+  const photos = (value.photos ?? []).slice(0, details ? 6 : 1).map(photoDescriptor);
+  if (place.googlePlaceId) rememberItineraryPhoto(place.googlePlaceId, photos[0]);
   return { place, info: {
     rating: Number.isFinite(value.rating) && value.rating! >= 0 && value.rating! <= 5 ? value.rating! : undefined,
     ratingCount: Number.isInteger(value.userRatingCount) && value.userRatingCount! >= 0 ? value.userRatingCount! : undefined,
@@ -137,7 +151,7 @@ async function normalize(value: google.maps.places.Place, details = false): Prom
     primaryTypeCode: value.primaryType?.slice(0,100),
     businessStatus: value.businessStatus ?? undefined,
     utcOffsetMinutes: Number.isFinite(value.utcOffsetMinutes) ? value.utcOffsetMinutes! : undefined,
-    fetchedAt: Date.now(), photos: (value.photos ?? []).slice(0, details ? 6 : 1).map(photoDescriptor),
+    fetchedAt: Date.now(), photos,
     currentHours: openingSchedule(value.currentOpeningHours), regularHours: openingSchedule(value.regularOpeningHours),
   } };
 }
@@ -262,6 +276,28 @@ export function fetchDiscoveryDetails(googleId: string): Promise<DiscoveryResult
       const result = await normalize(value, true);
       if (!result) throw { code: 'NOT_FOUND' };
       return result;
+    } catch (error) { throw new Error(mapsErrorMessage(error)); }
+  });
+}
+
+/** Called only for visible itinerary cards. The photo field includes its author credits. */
+export function fetchItineraryPhoto(googleId: string): Promise<DiscoveryPhoto | undefined> {
+  if (typeof googleId !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(googleId)) return Promise.reject(new Error('This saved place has an invalid Google Maps ID.'));
+  return cached(itineraryPhotoCache, googleId, async () => {
+    try {
+      const detail = detailCache.get(googleId);
+      if (detail && Date.now() - detail.at < CACHE_MS) {
+        const photo = (await detail.promise).info.photos[0];
+        rememberItineraryPhoto(googleId, photo);
+        return photo;
+      }
+      const maps = await loadGoogleMaps();
+      const { Place: GooglePlace } = await maps.importLibrary('places') as google.maps.PlacesLibrary;
+      const value = new GooglePlace({ id: googleId });
+      await timeout(value.fetchFields({ fields: ['photos'] }));
+      const photo = value.photos?.[0] ? photoDescriptor(value.photos[0]) : undefined;
+      rememberItineraryPhoto(googleId, photo);
+      return photo;
     } catch (error) { throw new Error(mapsErrorMessage(error)); }
   });
 }

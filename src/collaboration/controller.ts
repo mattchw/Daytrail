@@ -176,6 +176,34 @@ export function createCollaborationController(options:Options) {
     });}catch(caught){error=caught instanceof Error?caught.message:'Could not save this draft.';emit();return false;}
     if(accepted&&options.autoSync!==false)void sync();return accepted;
   }
+  /** Apply a stepper delta to the latest durable draft, including taps queued before a render. */
+  async function adjustActivityDuration(tripId:string,activityId:string,delta:number):Promise<boolean>{
+    if(!ready||!actorId||!Number.isSafeInteger(delta)||delta===0)return false;
+    const token=epoch,actor=actorId,id=recordId(tripId),shown=id&&data?.records[id];
+    if(!id||!shown||shown.revoked||shown.base.role==='viewer'||shown.conflicts.length||shown.desiredDeleted)return false;
+    let accepted=false,changed=false;
+    try{
+      const completed=await update(current=>{
+        // The storage transaction may have waited behind another tab or an account switch.
+        if(token!==epoch||actor!==actorId||!ready)return;
+        const record=current.records[id];
+        if(!record||record.draft.id!==tripId||record.revoked||record.base.role==='viewer'||record.conflicts.length||record.desiredDeleted)return;
+        const draft=structuredClone(record.draft),item=draft.days.flatMap(day=>day.items).find(activity=>activity.aid===activityId);
+        if(!item||item.departureForFlightId)return;
+        const duration=Math.max(15,Math.min(1440,item.duration+delta));
+        if(duration===item.duration){accepted=true;return;}
+        item.duration=duration;
+        const next=canonicalCloudTrip(draft);
+        record.undo={before:structuredClone(record.draft),after:structuredClone(next)};
+        record.draft=next;accepted=true;changed=true;
+      },token);
+      if(!completed||token!==epoch||actor!==actorId)return false;
+    }catch(caught){
+      if(token===epoch&&actor===actorId){error=caught instanceof Error?caught.message:'Could not save this draft.';emit();}
+      return false;
+    }
+    if(changed&&options.autoSync!==false)void sync();return accepted;
+  }
   async function resolveConflict(tripId:string,choices:ConflictChoices):Promise<boolean>{
     const id=recordId(tripId);if(!id)return false;let accepted=false;
     await update(current=>{const record=current.records[id];if(!record?.remote||record.revoked||record.base.role==='viewer')return;
@@ -240,7 +268,7 @@ export function createCollaborationController(options:Options) {
     async enable(sourceTripId:string,expectedRevision:number){if(!remote)return null;const token=epoch;try{const row=await remote.enable(sourceTripId,expectedRevision);if(token!==epoch)return null;
       await update(current=>{current.records[row.cloudId]=newSharedRecord(row);},token);return row.trip;
     }catch(caught){error=caught instanceof Error?caught.message:'Could not enable sharing.';emit();return null;}},
-    changeTrip,resolveConflict,undo,refresh,sync,retry:async()=>{await refresh();await sync();},
+    changeTrip,adjustActivityDuration,resolveConflict,undo,refresh,sync,retry:async()=>{await refresh();await sync();},
     deleteTrip:(id:string)=>setDeleted(id,true),restore:(id:string)=>setDeleted(id,false),
     setScope(tripId:string|null){scope=tripId;emit();},
     setEditing(value:boolean){editing=value;if(!value&&deferred.size){const rows=[...deferred.values()];deferred.clear();void update(current=>{for(const row of rows){const record=current.records[row.cloudId];if(record&&!record.revoked&&record.base.role===row.role&&record.base.channelEpoch===row.channelEpoch)acceptRow(record,row);}}).then(()=>{if(options.autoSync!==false)void sync();}).catch(caught=>{error=caught instanceof Error?caught.message:'Could not update this trip.';emit();});}},

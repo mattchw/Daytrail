@@ -1,0 +1,11 @@
+/* Temporary route text must not resize the itinerary while a visit is edited. */
+.day-timing-summary{margin:4px 0 0;color:var(--muted);font-size:11px;line-height:18px;min-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.day-stats{display:block;min-width:0}
+.day-stat-chips{display:flex;align-items:center;gap:7px;min-width:0;height:28px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.day-stat-chips::-webkit-scrollbar{display:none}
+.day-stat-chips .day-stat{flex:none;white-space:nowrap;line-height:16px;font-variant-numeric:tabular-nums}
+.day-stats>.sample-label{display:block;box-sizing:border-box;width:100%;height:18px;min-height:18px;margin-top:4px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.travel-leg.planner-leg .travel-text{font-size:11px;line-height:16px;min-width:0}
+.travel-leg.planner-leg.is-calculating .travel-text,.travel-leg.planner-leg.is-estimated .travel-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+.travel-leg.planner-leg.is-calculating .travel-text{color:var(--muted)}
+@media(max-width:760px){.travel-leg.planner-leg .travel-text{font-size:10px}}

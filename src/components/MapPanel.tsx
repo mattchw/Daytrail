@@ -293,7 +293,9 @@ export default function MapPanel({ day, places, schedule, selected, onSelect, pr
     pendingDestinationFit.current = null;
     setDestinationDismissed(true);
     const instance = map.current;
-    if (!instance || instance.getBounds()?.contains(point)) return;
+    // A mobile selection opens a footer and reduces the map's height. Centre the
+    // pin so it stays visible instead of being clipped against the new edge.
+    if (!instance || (!window.matchMedia('(max-width:760px)').matches && instance.getBounds()?.contains(point))) return;
     beginProgrammaticCamera();
     instance.panTo(point);
   }

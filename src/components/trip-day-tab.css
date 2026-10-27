@@ -1,0 +1,7 @@
+/* All tabs reserve the same rows, including inactive and recalculating days.
+   A changing finish time must never resize the strip above the editor. */
+.day-tabs-bar .day-tab{box-sizing:border-box;display:grid;grid-template-rows:18px 30px;align-content:center;row-gap:2px;flex:1 0 114px;min-width:114px;height:76px;min-height:76px}
+.day-tabs-bar .day-tab strong{min-width:0;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.day-tabs-bar .day-tab small{display:block;min-width:0;height:30px;margin:0;line-height:15px}
+.day-tabs-bar .day-tab-count,.day-tabs-bar .day-return{display:block;height:15px;min-width:0;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.day-tabs-bar .day-return{color:var(--muted)}

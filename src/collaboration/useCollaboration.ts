@@ -14,7 +14,7 @@ export function useCollaboration(options:{actorId:string|null;authReady:boolean;
   useEffect(()=>controller.setScope(options.activeTripId??null),[controller,options.activeTripId]);
   const switching=snapshot.actorId!==(options.authReady?options.actorId:null);
   const safe=switching?{...snapshot,actorId:options.authReady?options.actorId:null,trips:[],trash:[],metadataById:{},statusById:{},conflicts:[],recoveryDrafts:[],ready:false,pendingCount:0,acknowledgedCount:0,canUndo:false,error:null}:snapshot;
-  return {...safe,remote,changeTrip:controller.changeTrip,undo:controller.undo,setEditing:controller.setEditing,setScope:controller.setScope,
+  return {...safe,remote,changeTrip:controller.changeTrip,adjustActivityDuration:controller.adjustActivityDuration,undo:controller.undo,setEditing:controller.setEditing,setScope:controller.setScope,
     refresh:controller.refresh,retry:controller.retry,enable:controller.enable,resolveConflict:controller.resolveConflict,
     deleteTrip:controller.deleteTrip,restore:controller.restore,prepareSignOut:controller.prepareSignOut};
 }

@@ -208,4 +208,90 @@ await check('independent comfort edits merge while same-field pace conflicts sta
  const merged=mergeTrips(base,local,remote);assert.deepEqual(merged.conflicts,[]);assert.equal(merged.trip.days[0].items[0].meal,'meal');assert.equal(merged.trip.days[0].items[0].walkingMeters,1800);
  local.pace='relaxed';remote.pace='active';const conflict=mergeTrips(base,local,remote);assert.ok(conflict.conflicts.some(item=>item.path==='/pace'&&item.label==='Walking pace'));
 });
+await check('rapid duration taps accumulate against the latest durable draft before rendering',async()=>{
+ const {value,store}=await controller(),before=clone(value.getSnapshot().trips[0]),item=before.days[0].items[0];
+ assert.deepEqual(await Promise.all([15,15,15,-15].map(delta=>value.adjustActivityDuration(before.id,item.aid,delta))),[true,true,true,true]);
+ const expected=clone(before);expected.days[0].items[0].duration+=30;
+ assert.deepEqual(value.getSnapshot().trips[0],expected);
+ assert.deepEqual((await store.read('collaboration:'+actor)).records[cloud].draft,expected);
+ assert.equal(value.getSnapshot().conflicts.length,0);
+});
+await check('arrival visit duration remains editable without changing its linked flight booking',async()=>{
+ const saved=trip(),place=id=>({id,name:id,cat:'custom',x:50,y:50,area:'',typical:'',blurb:''});
+ saved.customPlaces={...saved.customPlaces,airportA:place('airportA'),airportB:place('airportB')};
+ saved.flights=[{id:'arrival-flight',fromPlaceId:'airportA',toPlaceId:'airportB',departure:{date:saved.startDate,time:'10:00',timezone:'Europe/London'},arrival:{date:saved.startDate,time:'11:00',timezone:'Europe/Dublin'},airportBufferMinutes:120,arrivalBufferMinutes:60}];
+ saved.days[0].startPlaceId='airportA';saved.days[0].endPlaceId='airportB';saved.days[0].endMode='drive';
+ saved.days[0].items=[{aid:'departure-buffer',placeId:'airportA',mode:'walk',departureForFlightId:'arrival-flight',duration:120,fixed:null,note:''},{aid:'arrival-visit',placeId:'airportB',mode:'flight',flightId:'arrival-flight',duration:45,fixed:null,note:'Meet family after landing'}];
+ const {value}=await controller(fakeRemote(row(saved))),before=clone(value.getSnapshot().trips[0]);
+ assert(await value.adjustActivityDuration(saved.id,'arrival-visit',15));
+ const expected=clone(before);expected.days[0].items[1].duration=60;
+ assert.deepEqual(value.getSnapshot().trips[0],expected);
+ assert.deepEqual(value.getSnapshot().trips[0].flights,before.flights);
+ assert.equal(await value.adjustActivityDuration(saved.id,'departure-buffer',15),false);
+ assert.deepEqual(value.getSnapshot().trips[0],expected);
+});
+await check('duration taps preserve another tab’s latest fields and follow a moved activity',async()=>{
+ const store=createMemoryCollaborationStore(),remote=fakeRemote(),a=await controller(remote,store),b=await controller(remote,store);
+ const before=clone(b.value.getSnapshot().trips[0]),item=before.days[0].items.shift();
+ item.note='Keep this latest note';item.freeTime={id:'free-shared',kind:'explore',duration:60,untilBooking:false};before.days[1].items.push(item);before.name='Latest title';
+ assert(await b.value.changeTrip(before));
+ assert(await a.value.adjustActivityDuration(before.id,item.aid,15));
+ const expected=clone(before);expected.days[1].items.at(-1).duration+=15;
+ assert.deepEqual(a.value.getSnapshot().trips[0],expected);
+});
+await check('duration bounds are successful no-ops and preserve the prior undo record',async()=>{
+ const {value,store}=await controller(),saved=value.getSnapshot().trips[0],item=saved.days[0].items[0];
+ assert(await value.adjustActivityDuration(saved.id,item.aid,-5000));
+ const lowUndo=clone((await store.read('collaboration:'+actor)).records[cloud].undo);
+ assert(await value.adjustActivityDuration(saved.id,item.aid,-15));
+ assert.equal(value.getSnapshot().trips[0].days[0].items[0].duration,15);
+ assert.deepEqual((await store.read('collaboration:'+actor)).records[cloud].undo,lowUndo);
+ assert(await value.adjustActivityDuration(saved.id,item.aid,5000));
+ const highUndo=clone((await store.read('collaboration:'+actor)).records[cloud].undo);
+ assert(await value.adjustActivityDuration(saved.id,item.aid,15));
+ assert.equal(value.getSnapshot().trips[0].days[0].items[0].duration,1440);
+ assert.deepEqual((await store.read('collaboration:'+actor)).records[cloud].undo,highUndo);
+ for(const delta of [0,NaN,Infinity,1.5,Number.MAX_SAFE_INTEGER+1])assert.equal(await value.adjustActivityDuration(saved.id,item.aid,delta),false);
+ assert.equal(await value.adjustActivityDuration(saved.id,'missing-activity',15),false);
+ assert(await value.undo(saved.id));assert.equal(value.getSnapshot().trips[0].days[0].items[0].duration,15);
+});
+await check('a queued duration tap rechecks permissions, deletion and conflicts in storage',async()=>{
+ const changes=[record=>{record.base.role='viewer';},record=>{record.revoked=true;},record=>{record.desiredDeleted=true;},record=>{record.conflicts=[{path:'/name',label:'Trip name',kind:'field',base:'A',local:'B',remote:'C'}];},record=>{record.draft.days[0].items.shift();}];
+ for(const change of changes){
+  const memory=createMemoryCollaborationStore();let wait=false,release;const gate=new Promise(resolve=>release=resolve);
+  const store={read:memory.read,update:async(...args)=>{if(wait)await gate;return memory.update(...args);}};
+  const {value}=await controller(fakeRemote(),store),before=value.getSnapshot().trips[0];wait=true;
+  const adjusting=value.adjustActivityDuration(before.id,before.days[0].items[0].aid,15);
+  await memory.update('collaboration:'+actor,current=>{change(current.records[cloud]);return current;});
+  const latest=await memory.read('collaboration:'+actor);release();
+  assert.equal(await adjusting,false);assert.deepEqual(await memory.read('collaboration:'+actor),latest);
+ }
+});
+await check('account switches cancel queued duration taps before they change the old account draft',async()=>{
+ const memory=createMemoryCollaborationStore();let wait=false,release;const gate=new Promise(resolve=>release=resolve);
+ const store={read:memory.read,update:async(...args)=>{if(wait)await gate;return memory.update(...args);}};
+ const {value,remote}=await controller(fakeRemote(),store),before=await memory.read('collaboration:'+actor),saved=value.getSnapshot().trips[0];wait=true;
+ const adjusting=value.adjustActivityDuration(saved.id,saved.days[0].items[0].aid,15);
+ await value.setIdentity(other,{list:async()=>[]});release();
+ assert.equal(await adjusting,false);assert.deepEqual(await memory.read('collaboration:'+actor),before);
+ assert.equal(value.getSnapshot().actorId,other);assert.equal(value.getSnapshot().trips.length,0);assert.equal(remote.calls.length,0);
+});
+await check('duration edits queued during save preserve immutable requests and all later taps',async()=>{
+ const {value,remote}=await controller(),saved=value.getSnapshot().trips[0],item=saved.days[0].items[0];
+ assert(await value.adjustActivityDuration(saved.id,item.aid,15));
+ let entered,release;const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ remote.before=async()=>{entered();await gate;};const syncing=value.sync();await started;
+ const sent=clone(remote.calls[0]);
+ assert.deepEqual(await Promise.all([15,15].map(delta=>value.adjustActivityDuration(saved.id,item.aid,delta))),[true,true]);
+ assert.deepEqual(remote.calls[0],sent);remote.before=null;release();await syncing;
+ assert.equal(remote.current.trip.days[0].items[0].duration,item.duration+45);assert.equal(value.getSnapshot().pendingCount,0);
+ assert(await value.undo(saved.id));assert.equal(value.getSnapshot().trips[0].days[0].items[0].duration,item.duration+30);
+});
+await check('duration storage failures keep the draft unchanged and never reach the server',async()=>{
+ const memory=createMemoryCollaborationStore();let fail=false;
+ const store={read:memory.read,update:async(...args)=>{if(fail)throw new Error('Disk full');return memory.update(...args);}};
+ const {value,remote}=await controller(fakeRemote(),store),before=clone(value.getSnapshot().trips[0]);fail=true;
+ assert.equal(await value.adjustActivityDuration(before.id,before.days[0].items[0].aid,15),false);
+ assert.deepEqual(value.getSnapshot().trips[0],before);assert.equal(remote.calls.length,0);assert.match(value.getSnapshot().error,/Disk full/);
+});
 console.log(`\n${passed} collaboration checks passed; ${failed} failed.`);if(failed)process.exitCode=1;

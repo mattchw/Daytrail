@@ -9,6 +9,27 @@
   .mobile-workspace .day-heading {padding:10px 16px 8px;}
   .mobile-workspace .trip-overview {overflow:visible;height:auto;flex:none;}
   .mobile-workspace .map-column {width:100%;height:calc(100dvh - 124px - env(safe-area-inset-bottom));min-height:350px;flex:none;padding:0 8px 8px;}
+  /* Map mode fills the screen; its place card stays above the fixed navigation.
+     Let flex size the map after headers instead of subtracting guessed heights. */
+  .workspace.mobile-map-workspace {height:100dvh;min-height:0;display:flex;overflow:hidden;padding-bottom:calc(60px + env(safe-area-inset-bottom));}
+  .workspace.mobile-map-workspace.improve-map-review {padding-bottom:calc(144px + env(safe-area-inset-bottom));}
+  .mobile-map-workspace>header,.mobile-map-workspace>.trip-bookings-compact,.mobile-map-workspace>.offline-banner,.mobile-map-workspace>.save-error,.mobile-map-workspace>.notice {flex-shrink:0;}
+  .mobile-map-workspace .workspace-body {display:flex;flex:1;min-height:0;overflow:hidden;}
+  .mobile-map-workspace .map-column {height:auto;min-height:0;min-width:0;flex:1;overflow:hidden;padding:0;}
+  .mobile-map-workspace .dt-map-surface {overflow:hidden;}
+  .mobile-map-workspace .dt-map-viewport {min-height:0;}
+  .mobile-map-workspace .dt-map-surface:has(.dt-map-place-preview) .dt-map-viewport {min-height:74px;}
+  .mobile-map-workspace .dt-map-heading {min-height:36px;padding:8px 12px;}
+  .mobile-map-workspace .dt-map-heading>svg,.mobile-map-workspace .dt-map-heading strong,.mobile-map-workspace .dt-map-live-label {display:none;}
+  .mobile-map-workspace .dt-map-heading div>span {margin:0;font-size:11px;}
+  .mobile-map-workspace .dt-map .dt-map-surface>.dt-map-mobile-stop {display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:10px;padding:10px 12px;}
+  .mobile-map-workspace .dt-map-mobile-stop-main {width:auto;gap:8px;align-items:center;}
+  .mobile-map-workspace .dt-map-mobile-stop-main>div {flex:1;}
+  .mobile-map-workspace .dt-map-stop-actions {display:grid;grid-template-columns:1fr 1fr;gap:4px;width:auto;}
+  .mobile-map-workspace .dt-map-stop-actions button {min-height:44px;padding:8px;}
+  .mobile-map-workspace .dt-map-stop-actions .dt-map-primary {grid-column:1/-1;width:100%;min-width:0;margin:0;}
+  .mobile-map-workspace .dt-map-mobile-stop>p {grid-column:1/-1;}
+  .mobile-map-workspace .offline-journey {height:100%;min-height:0;overflow:auto;}
   .mobile-trip-header {display:flex;align-items:center;gap:4px;min-height:60px;padding:8px 12px;background:var(--paper);border-bottom:1px solid var(--border);}
   .mobile-trip-title {display:flex;align-items:center;gap:7px;min-width:0;flex:1;min-height:44px;padding:0 4px 0 0;border:0;background:none;text-align:left;}
   .mobile-trip-title h1 {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:19px;letter-spacing:-.4px;font-weight:730;}
@@ -46,6 +67,13 @@
   .mobile-workspace .planner-route-note {margin:8px 0;}
   .mobile-workspace .timeline-scroll>.day-endpoint:first-child {margin-top:4px;}
   .mobile-workspace .modal {scroll-margin:0;}
+}
+@media (max-width:760px) and (max-height:700px) {
+  .mobile-map-workspace .dt-map-heading {display:none;}
+  .mobile-map-workspace .dt-map-controls {flex-direction:row;top:8px;right:8px;}
+  .mobile-map-workspace .dt-map-controls>span {height:22px;width:1px;margin:0 3px;}
+  .mobile-map-workspace .dt-map-controls .dt-map-reset {height:36px;border-top:0;border-left:1px solid #e9e3d8;margin:0;padding:0;}
+  .mobile-map-workspace .dt-map-search-area,.mobile-map-workspace .dt-map-location-help,.mobile-map-workspace .dt-map-destination-notice {top:60px;right:8px;}
 }
 @media (max-width:360px) {
   .mobile-trip-header {padding-inline:8px;}

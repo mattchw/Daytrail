@@ -17,7 +17,7 @@ const hookURL = dataURL(compile('./useLiveRoutes.ts')
   .replace(/from ['"]\.\/model['"]/g, `from ${JSON.stringify(modelURL)}`)
   .replace(/from ['"]\.\/visitHours['"]/g, `from ${JSON.stringify(visitURL)}`)
   .replace(/from ['"]\.\/hoursPlanning['"]/g, `from ${JSON.stringify(planningURL)}`).replace(/from ['"]\.\/googleMaps['"]/g, `from ${JSON.stringify(serviceURL)}`));
-const { tripDayDate, zonedDeparture, transitDateReason, calculateDayRoutes, pendingLegs, routeInputSignature, reuseReadyStaticLegs } = await import(hookURL);
+const { tripDayDate, zonedDeparture, transitDateReason, calculateDayRoutes, pendingLegs, routeInputSignature, reuseReadyStaticLegs, reuseReadyRouteLegs, updateRouteLegs } = await import(hookURL);
 let passed = 0;
 async function check(name, test) { await test(); passed += 1; console.log(`✓ ${name}`); }
 const point = (id, lat = 35, lng = 135) => ({ id, name: id, cat: 'attr', area: '', typical: '', blurb: '', x: 0, y: 0, lat, lng });
@@ -243,6 +243,154 @@ await check('a direct transfer can reuse only the exact same static endpoint pai
   assert.equal(reuseReadyStaticLegs(changed, prior, legs).return.min, 45);
   changed.day.endPlaceId = 'b'; assert.equal(reuseReadyStaticLegs(changed, prior, legs).return.min, null);
   changed.day.endPlaceId = 'hotel'; assert.equal(reuseReadyStaticLegs(changed, prior, legs).return.min, 0);
+});
+const transitPlan = () => {
+  const plan = input(['a', 'b', 'c'].map(aid => activity(aid, {mode: 'transit'})));
+  plan.day.endMode = 'transit';
+  return plan;
+};
+const transitLegs = () => ({a: ready('transit', 21), b: ready('transit', 58), c: ready('transit', 12), return: ready('transit', 18)});
+await check('editing a later visit keeps its incoming transit prefix and clears only downstream departures', () => {
+  const prior = transitPlan(), changed = structuredClone(prior), legs = transitLegs();
+  changed.day.items[1].duration += 15;
+  const next = reuseReadyRouteLegs(changed, prior, legs);
+  assert.strictEqual(next.a, legs.a); assert.strictEqual(next.b, legs.b);
+  assert.equal(next.c.status, 'loading'); assert.equal(next.return.status, 'loading');
+});
+await check('editing the first or last visit never invalidates its own incoming transit', () => {
+  const prior = transitPlan(), legs = transitLegs();
+  for (const index of [0, 2]) {
+    const changed = structuredClone(prior); changed.day.items[index].duration += 15;
+    const next = reuseReadyRouteLegs(changed, prior, legs);
+    for (let before = 0; before <= index; before++) assert.strictEqual(next[prior.day.items[before].aid], legs[prior.day.items[before].aid]);
+    for (let after = index + 1; after < 3; after++) assert.equal(next[prior.day.items[after].aid].status, 'loading');
+    assert.equal(next.return.status, 'loading');
+  }
+});
+await check('fixed time and fixed free-time length edits invalidate outgoing transit, never invent a booking reset', () => {
+  for (const patch of [{fixed: 720}, {freeTime: {id: 'free', kind: 'explore', duration: 60, untilBooking: false}}]) {
+    const prior = transitPlan(); prior.day.items[2].fixed = 1000;
+    const changed = structuredClone(prior); Object.assign(changed.day.items[1], patch);
+    const next = reuseReadyRouteLegs(changed, prior, transitLegs());
+    assert.equal(next.a.min, 21); assert.equal(next.b.min, 58);
+    assert.equal(next.c.status, 'loading'); assert.equal(next.return.status, 'loading');
+  }
+});
+await check('unchanged fixed free time preserves transit but until-booking time bounds the reusable prefix', () => {
+  for (const untilBooking of [false, true]) {
+    const prior = transitPlan(); prior.day.items[0].freeTime = {id: 'free', kind: 'explore', duration: 60, untilBooking};
+    prior.day.items[2].fixed = 1000;
+    const changed = structuredClone(prior); changed.day.items[2].fixed += 30;
+    const next = reuseReadyRouteLegs(changed, prior, transitLegs());
+    assert.equal(next.a.min, 21);
+    assert.equal(next.b.status, untilBooking ? 'loading' : 'ready');
+    assert.equal(next.c.status, untilBooking ? 'loading' : 'ready');
+    assert.equal(next.return.status, 'loading');
+  }
+});
+await check('changing upstream date, zone, day, start clock, start place, hours, or flight timing clears the transit prefix', () => {
+  const mutations = [
+    plan => { plan.date = '2026-11-02'; }, plan => { plan.timezone = 'UTC'; }, plan => { plan.day.id = 'd2'; },
+    plan => { plan.day.startTime = 600; }, plan => { plan.day.startPlaceId = 'c'; },
+    plan => { plan.hours = {a: {fetchedAt: 1}}; },
+    plan => { plan.flights = [{id: 'arrival', arrival: {date: plan.date, time: '08:00', timezone: plan.timezone}}]; },
+    plan => { plan.places.hotel.lat += .01; }, plan => { plan.places.hotel.googlePlaceId = 'new-hotel'; },
+  ];
+  for (const mutate of mutations) {
+    const prior = transitPlan(), changed = structuredClone(prior); mutate(changed);
+    const next = reuseReadyRouteLegs(changed, prior, transitLegs());
+    assert.ok(Object.values(next).every(leg => leg.status !== 'ready'));
+  }
+});
+await check('reordering, moving, or changing a transit mode invalidates that journey and every downstream transit', () => {
+  for (const mutate of [
+    plan => { [plan.day.items[1], plan.day.items[2]] = [plan.day.items[2], plan.day.items[1]]; },
+    plan => { plan.places.b.lat += .01; }, plan => { plan.places.b.googlePlaceId = 'different-place'; },
+    plan => { plan.day.items[1].mode = 'walk'; }, plan => { plan.day.items[1].aid = 'replacement'; },
+  ]) {
+    const prior = transitPlan(), changed = structuredClone(prior); mutate(changed);
+    const next = reuseReadyRouteLegs(changed, prior, transitLegs());
+    assert.equal(next.a.min, 21);
+    for (const item of changed.day.items.slice(1)) assert.equal(next[item.aid].status, 'loading');
+    assert.equal(next.return.status, 'loading');
+  }
+});
+await check('partial, missing, mismatched, and invalid prefix results cannot prove later transit departure times', () => {
+  for (const bad of [undefined, {...ready('transit'), status: 'loading'}, {...ready('transit'), status: 'unavailable'},
+    ready('walk'), ready('transit', null), ready('transit', NaN), ready('transit', -1)]) {
+    const prior = transitPlan(), changed = structuredClone(prior), legs = transitLegs();
+    changed.day.items[2].duration += 15; legs.b = bad;
+    const next = reuseReadyRouteLegs(changed, prior, legs);
+    assert.equal(next.a.min, 21); assert.equal(next.b.status, 'loading');
+    assert.equal(next.c.status, 'loading'); assert.equal(next.return.status, 'loading');
+  }
+});
+await check('new and resolved incoming-flight issues never reuse transit from a different departure context', () => {
+  for (const priorIssue of [false, true]) {
+    const prior = transitPlan(), changed = structuredClone(prior);
+    (priorIssue ? prior : changed).incomingFlightIssue = 'Confirm arrival';
+    assert.ok(Object.values(reuseReadyRouteLegs(changed, prior, transitLegs())).every(leg => leg.status !== 'ready'));
+  }
+});
+await check('equivalent legacy defaults and notes retain exact transit legs including the return', () => {
+  const prior = transitPlan(), changed = structuredClone(prior), legs = transitLegs();
+  Object.assign(changed.day, {startTime: 540, startPlaceId: 'hotel', endPlaceId: 'hotel', finishBy: 1300});
+  changed.day.items[1].note = 'Bring an umbrella';
+  const next = reuseReadyRouteLegs(changed, prior, legs);
+  for (const id of ['a', 'b', 'c', 'return']) assert.strictEqual(next[id], legs[id]);
+});
+await check('removing or adding a last stop preserves only the common prefix and not the return', () => {
+  const prior = transitPlan(), changed = structuredClone(prior); changed.day.items.pop();
+  let next = reuseReadyRouteLegs(changed, prior, transitLegs());
+  assert.equal(next.a.min, 21); assert.equal(next.b.min, 58); assert.equal(next.return.status, 'loading');
+  next = reuseReadyRouteLegs(prior, changed, transitLegs());
+  assert.equal(next.a.min, 21); assert.equal(next.b.min, 58); assert.equal(next.c.status, 'loading'); assert.equal(next.return.status, 'loading');
+});
+await check('changing the final destination preserves preceding transit while invalidating its return', () => {
+  const prior = transitPlan(), changed = structuredClone(prior); changed.day.endPlaceId = 'a';
+  const next = reuseReadyRouteLegs(changed, prior, transitLegs());
+  assert.equal(next.a.min, 21); assert.equal(next.b.min, 58); assert.equal(next.c.min, 12); assert.equal(next.return.status, 'loading');
+});
+await check('direct transit transfer reuse requires identical departure and destination inputs', () => {
+  const prior = input([]); Object.assign(prior.day, {startPlaceId: 'c', endMode: 'transit'});
+  const changed = structuredClone(prior), legs = {return: ready('transit', 55)};
+  assert.strictEqual(reuseReadyRouteLegs(changed, prior, legs).return, legs.return);
+  changed.day.startTime = 600; assert.equal(reuseReadyRouteLegs(changed, prior, legs).return.status, 'loading');
+  changed.day.startTime = 540; changed.day.endPlaceId = 'a';
+  assert.equal(reuseReadyRouteLegs(changed, prior, legs).return.status, 'loading');
+});
+await check('prefix protection retains independent static routes after an affected transit departure', () => {
+  const prior = transitPlan(); prior.day.items[2].mode = 'walk'; prior.day.endMode = 'drive';
+  const changed = structuredClone(prior); changed.day.items[0].duration += 15;
+  const legs = {...transitLegs(), c: ready('walk', 12), return: ready('drive', 18)};
+  const next = reuseReadyRouteLegs(changed, prior, legs);
+  assert.equal(next.a.min, 21); assert.equal(next.b.status, 'loading');
+  assert.strictEqual(next.c, legs.c); assert.strictEqual(next.return, legs.return);
+});
+await check('a changed provider travel time invalidates reused downstream transit while keeping static journeys', () => {
+  const plan = transitPlan(), legs = transitLegs(); plan.day.items[2].mode = 'walk'; legs.c = ready('walk', 12);
+  const next = updateRouteLegs(plan, legs, 'a', ready('transit', 25));
+  assert.equal(next.a.min, 25); assert.equal(next.b.status, 'loading');
+  assert.strictEqual(next.c, legs.c); assert.equal(next.return.status, 'loading');
+  assert.equal(legs.b.min, 58, 'the previous published state is immutable');
+});
+await check('unchanged provider timing does not discard confirmed downstream transit for distance or path updates', () => {
+  const plan = transitPlan(), legs = transitLegs();
+  const next = updateRouteLegs(plan, legs, 'a', {...ready('transit', 21), km: '2.1', path: [{lat: 35, lng: 135}]});
+  assert.equal(next.a.km, '2.1');
+  for (const id of ['b', 'c', 'return']) assert.strictEqual(next[id], legs[id]);
+});
+await check('a refreshed route failure clears later transit even beyond a fixed booking', () => {
+  const plan = transitPlan(), legs = transitLegs(); plan.day.items[1].fixed = 900;
+  const next = updateRouteLegs(plan, legs, 'a', service.unavailableJourney('transit', 'No service'));
+  assert.equal(next.a.status, 'unavailable');
+  for (const id of ['b', 'c', 'return']) assert.equal(next[id].status, 'loading');
+});
+await check('a changed flight instant invalidates later transit even when its duration is unchanged', () => {
+  const plan = transitPlan(), legs = transitLegs(); plan.day.items[0].mode = 'flight';
+  legs.a = {...ready('flight', 60), flight: {arrivalReadyMs: 1}};
+  const next = updateRouteLegs(plan, legs, 'a', {...ready('flight', 60), flight: {arrivalReadyMs: 60001}});
+  for (const id of ['b', 'c', 'return']) assert.equal(next[id].status, 'loading');
 });
 await check('search preserves explicit geography and sanitizes upstream errors', () => {
   assert.equal(service.placeSearchQuery('coffee', 'Kyoto, Japan'), 'coffee in Kyoto, Japan');

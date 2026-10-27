@@ -106,6 +106,63 @@ export function reuseReadyStaticLegs(input: DayRouteInput, priorInput: DayRouteI
   return next;
 }
 
+/** Keep the confirmed prefix when a later visit changes. An incoming journey
+ * does not depend on the duration of the visit it leads to. Downstream transit
+ * stays pending as soon as any departure-determining input changes.
+ */
+export function reuseReadyRouteLegs(input: DayRouteInput, priorInput: DayRouteInput | null, priorLegs: Record<string, Journey>): Record<string, Journey> {
+  const next = reuseReadyStaticLegs(input, priorInput, priorLegs);
+  if (!priorInput || input.incomingFlightIssue || priorInput.incomingFlightIssue
+    || input.day.id !== priorInput.day.id || input.date !== priorInput.date || input.timezone !== priorInput.timezone
+    || dayStartTime(input.day) !== dayStartTime(priorInput.day)
+    || JSON.stringify(input.hours ?? {}) !== JSON.stringify(priorInput.hours ?? {})
+    || JSON.stringify(input.flights ?? []) !== JSON.stringify(priorInput.flights ?? [])) return next;
+  const samePlace = (a: Place | undefined, b: Place | undefined) => !!a && !!b && hasCoordinates(a) && hasCoordinates(b)
+    && a.id === b.id && a.googlePlaceId === b.googlePlaceId && a.lat === b.lat && a.lng === b.lng;
+  let from = dayStartPlace(input.day, input.places), priorFrom = dayStartPlace(priorInput.day, priorInput.places);
+  if (!samePlace(from, priorFrom)) return next;
+  const confirmed = (leg: Journey | undefined, mode: Journey['mode']) => leg?.status === 'ready' && leg.mode === mode
+    && leg.min !== null && Number.isFinite(leg.min) && leg.min >= 0;
+  const departureInputs = (item: Day['items'][number]) => JSON.stringify([item.duration, item.fixed,
+    item.flightId ?? null, item.departureForFlightId ?? null, item.freeTime ?? null]);
+  for (let index = 0; index < input.day.items.length; index++) {
+    const item = input.day.items[index], prior = priorInput.day.items[index];
+    if (!prior || item.aid !== prior.aid || item.placeId !== prior.placeId || item.mode !== prior.mode
+      || item.flightId !== prior.flightId || !samePlace(input.places[item.placeId], priorInput.places[prior.placeId])) return next;
+    const leg = priorLegs[item.aid];
+    // A missing or partial upstream result cannot establish later departures,
+    // even when a later stop has a fixed booking time.
+    if (!confirmed(leg, item.mode)) return next;
+    next[item.aid] = leg;
+    if (departureInputs(item) !== departureInputs(prior)) return next;
+    // An until-booking block is solved using later journeys and bookings. Keep
+    // its incoming leg, but never assume its outgoing departure is unchanged.
+    if (item.freeTime?.untilBooking || prior.freeTime?.untilBooking) return next;
+    from = input.places[item.placeId];
+    priorFrom = priorInput.places[prior.placeId];
+  }
+  if (input.day.items.length === priorInput.day.items.length && samePlace(from, priorFrom)
+    && hasEndJourney(input.day) && hasEndJourney(priorInput.day)
+    && input.day.endMode === priorInput.day.endMode && input.day.endFlightId === priorInput.day.endFlightId
+    && samePlace(dayEndPlace(input.day, input.places), dayEndPlace(priorInput.day, priorInput.places))
+    && confirmed(priorLegs.return, input.day.endMode)) next.return = priorLegs.return;
+  return next;
+}
+
+/** A fresh provider result can change even for identical route inputs. Do not
+ * leave a reused later transit marked ready after its departure has changed.
+ */
+export function updateRouteLegs(input: DayRouteInput, legs: Record<string, Journey>, id: string, leg: Journey): Record<string, Journey> {
+  const next = {...legs, [id]: leg}, prior = legs[id];
+  const timing = (value: Journey | undefined) => JSON.stringify([value?.mode, value?.status, value?.min, value?.flight]);
+  const index = input.day.items.findIndex(item => item.aid === id);
+  if (index < 0 || timing(prior) === timing(leg)) return next;
+  const pending = pendingLegs(input);
+  for (const item of input.day.items.slice(index + 1)) if (item.mode === 'transit') next[item.aid] = pending[item.aid];
+  if (input.day.endMode === 'transit') next.return = pending.return;
+  return next;
+}
+
 /** Transit departures depend on preceding journeys; fixed bookings never reset uncertainty. */
 async function calculateDayRoutePass(
   input: DayRouteInput,
@@ -243,14 +300,14 @@ export function useLiveRoutes(trip: Trip, dayIndex: number, places: Record<strin
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    const legs = reuseReadyStaticLegs(input, latest.current.input, latest.current.legs);
+    let legs = reuseReadyRouteLegs(input, latest.current.input, latest.current.legs);
     const publish = (next: RouteState) => { latest.current = next; setState(next); };
     publish({ key, input, legs, loading: hasEndJourney(input.day), error: null });
     const timer = window.setTimeout(() => {
       void calculateDayRoutes(input, (id, leg) => {
         if (!active) return;
-        legs[id] = leg;
-        publish({ key, input, legs: { ...legs }, loading: true, error: null });
+        legs = updateRouteLegs(input, legs, id, leg);
+        publish({ key, input, legs, loading: true, error: null });
       }, () => active).then(result => {
         if (!active) return;
         const failures = Object.values(result).filter(leg => leg.status === 'unavailable');
@@ -266,5 +323,5 @@ export function useLiveRoutes(trip: Trip, dayIndex: number, places: Record<strin
   const retry = useCallback(() => setAttempt(value => value + 1), []);
   if (!enabled) return { legs: {}, loading: false, error: null, retry };
   return state.key === key ? { legs: state.legs, loading: state.loading, error: state.error, retry }
-    : { legs: reuseReadyStaticLegs(input, state.input, state.legs), loading: hasEndJourney(input.day), error: null, retry };
+    : { legs: reuseReadyRouteLegs(input, state.input, state.legs), loading: hasEndJourney(input.day), error: null, retry };
 }

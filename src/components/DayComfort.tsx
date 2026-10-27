@@ -1,5 +1,5 @@
-import {useEffect,useId,useRef,useState} from 'react';
-import {CloudSun,CloudRain,Footprints,Utensils,ChevronDown,RefreshCw,SlidersHorizontal,X,Info} from 'lucide-react';
+import {useId,useRef,useState} from 'react';
+import {CloudSun,CloudRain,Footprints,Utensils,ChevronDown,RefreshCw,X,Info} from 'lucide-react';
 import {formatTime,type Pace} from '../model';
 import type {PacingAssessment} from '../pacing/model';
 import type {DayWeatherResult} from '../weather/useDayWeather';
@@ -23,12 +23,11 @@ export interface DayComfortProps {
   onDismiss?:(key:string)=>void;isDismissed?:(key:string)=>boolean;
 }
 export default function DayComfort({assessment,weather,readOnly=false,online=true,compact=false,onPaceChange,onIndoorIdeas,onPreview,onDismiss,isDismissed=()=>false}:DayComfortProps){
-  const [expanded,setExpanded]=useState(false),[paceOpen,setPaceOpen]=useState(false),[sheetOpen,setSheetOpen]=useState(false);
+  const [sheetOpen,setSheetOpen]=useState(false);
   const dialogRef=useRef<HTMLDialogElement>(null),openerRef=useRef<HTMLButtonElement|null>(null),summaryRef=useRef<HTMLButtonElement>(null),sheetId=useId(),titleId=useId(),paceId=useId();
-  useEffect(()=>{if(!compact){dialogRef.current?.close();setSheetOpen(false);}},[compact]);
   const openSheet=(opener:HTMLButtonElement)=>{openerRef.current=opener;dialogRef.current?.showModal();setSheetOpen(true);};
   const closeSheet=()=>{dialogRef.current?.close();setSheetOpen(false);(openerRef.current?.isConnected?openerRef.current:summaryRef.current)?.focus({preventScroll:true});};
-  const runAction=(action:()=>void)=>{if(compact)closeSheet();action();};
+  const runAction=(action:()=>void)=>{closeSheet();action();};
   const {walking,gaps}=assessment,unknown=walking.unknownLegIds.length+walking.unknownVisitIds.length;
   const meals=assessment.meals.filter(meal=>meal.kind==='meal').map(meal=>`${meal.start%1440<960?'Lunch':'Dinner'} ${formatTime(meal.start)}`).join(' · ');
   const paceName=assessment.pace[0].toUpperCase()+assessment.pace.slice(1),walkKey=comfortNoticeKey(assessment,'taxi'),mealKey=comfortNoticeKey(assessment,'meal'),rainKey=weatherNoticeKey(weather);
@@ -41,22 +40,20 @@ export default function DayComfort({assessment,weather,readOnly=false,online=tru
       <WeatherSummary weather={weather}/>
       <span className={`comfort-chip ${walking.exceedsLimit?'comfort-chip-warning':''}`} title={unknown?'Some walking distances still need confirmation.':'Known walking distances, including any labelled visit estimates.'}><Footprints size={14} aria-hidden="true"/>{unknown?'At least ':walking.estimatedVisitIds.length?'≈ ':''}{distance(walking.knownMeters)} on foot{walking.estimatedVisitIds.length>0?' · includes estimates':''}</span>
       <span className={`comfort-chip ${gaps.length?'comfort-chip-warning':''}`}><Utensils size={13} aria-hidden="true"/>{!assessment.timingComplete?'Meal timing to confirm':gaps.length?`${gaps[0].window==='lunch'?'Lunch':'Dinner'} to plan`:meals||'No long meal gaps'}</span>
-      {!compact&&<button type="button" className="comfort-chip comfort-pace" onClick={()=>setPaceOpen(value=>!value)} aria-expanded={paceOpen} disabled={readOnly||!onPaceChange}><SlidersHorizontal size={13} aria-hidden="true"/>Pace: {paceName} · {distance(assessment.limitMeters)}<ChevronDown size={12} aria-hidden="true"/></button>}
     </div>
     {!online&&notices.length>0&&<p className="subtle-note">Connect to check route changes. Your saved Ideas are still available.</p>}
-    {(paceOpen||compact)&&<fieldset className="comfort-pace-choices" disabled={readOnly||!onPaceChange}><legend>Comfortable walking distance each day</legend>{(['relaxed','moderate','active'] as const).map((pace,index)=><label key={pace}><input type="radio" name={paceId} value={pace} checked={assessment.pace===pace} onChange={()=>{onPaceChange?.(pace);setPaceOpen(false);}}/>{pace[0].toUpperCase()+pace.slice(1)}<small>{[8,12,16][index]} km</small></label>)}<p>A planning preference, including walking at stops when known.</p></fieldset>}
-    {(compact||expanded?notices:notices.slice(0,2)).map(notice=><article className={`comfort-notice comfort-notice-${notice.kind}`} key={notice.key}><strong>{notice.title}</strong><p>{notice.body}</p><div>{notice.run&&<button type="button" className="comfort-action" onClick={()=>runAction(notice.run!)}>{notice.action}</button>}{notice.kind==='rain'&&!readOnly&&onPreview&&<button type="button" className="comfort-action" onClick={()=>runAction(()=>onPreview('rain',weather.rainVisits[0]?.activityId))}>Review another day</button>}{onDismiss&&<button type="button" className="comfort-keep" onClick={()=>onDismiss(notice.key)}>{notice.dismiss}</button>}</div></article>)}
-    {!compact&&notices.length>2&&<button type="button" className="comfort-more" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}>{expanded?'Show fewer considerations':`${notices.length-2} more consideration`}</button>}
+    {notices.map(notice=><article className={`comfort-notice comfort-notice-${notice.kind}`} key={notice.key}><strong>{notice.title}</strong><p>{notice.body}</p><div>{notice.run&&<button type="button" className="comfort-action" onClick={()=>runAction(notice.run!)}>{notice.action}</button>}{notice.kind==='rain'&&!readOnly&&onPreview&&<button type="button" className="comfort-action" onClick={()=>runAction(()=>onPreview('rain',weather.rainVisits[0]?.activityId))}>Review another day</button>}{onDismiss&&<button type="button" className="comfort-keep" onClick={()=>onDismiss(notice.key)}>{notice.dismiss}</button>}</div></article>)}
+    <fieldset className="comfort-pace-choices" disabled={readOnly||!onPaceChange}><legend>Comfortable walking distance each day</legend>{(['relaxed','moderate','active'] as const).map((pace,index)=><label key={pace}><input type="radio" name={paceId} value={pace} checked={assessment.pace===pace} onChange={()=>onPaceChange?.(pace)}/>{pace[0].toUpperCase()+pace.slice(1)}<small>{[8,12,16][index]} km</small></label>)}<p>A planning preference, including walking at stops when known.</p></fieldset>
   </>;
-  if(!compact)return <section className="day-comfort" aria-label="Pacing and weather">{details}</section>;
   const Icon=weather.rainVisits.length?CloudRain:CloudSun;
   const weatherLabel=weather.summary?`${weather.summary.label}${weather.summary.high===null?'':` ${weather.summary.high}°`}${['offline','stale'].includes(weather.status)?' · saved':''}`:weatherStatusLabel(weather);
+  const clearReminderLabel=assessment.timingComplete?'No reminders · View details':'Updating reminders…';
   const walkingLabel=`${unknown?'≥ ':walking.estimatedVisitIds.length?'≈ ':''}${distance(walking.knownMeters)}`;
-  return <section className="day-comfort day-comfort-compact" aria-label="Pacing and weather">
+  return <section className={`day-comfort day-comfort-summary${compact?' day-comfort-compact':''}`} aria-label="Pacing and weather">
     <button ref={summaryRef} type="button" className="comfort-summary" onClick={event=>openSheet(event.currentTarget)} aria-haspopup="dialog" aria-controls={sheetId} aria-expanded={sheetOpen} aria-label={`${weatherLabel}. ${unknown?'At least ':walking.estimatedVisitIds.length?'Approximately ':''}${distance(walking.knownMeters)} on foot. ${paceName} pace. Open weather and pacing details.`}>
       <Icon size={16} aria-hidden="true"/><span className="comfort-summary-weather">{weatherLabel}</span><span className="comfort-summary-divider" aria-hidden="true">·</span><span className="comfort-summary-walk"><Footprints size={14} aria-hidden="true"/>{walkingLabel}</span><span className="comfort-summary-divider" aria-hidden="true">·</span><span>{paceName}</span><ChevronDown size={14} aria-hidden="true"/>
     </button>
-    {notices.length>0&&<button type="button" className={`comfort-summary-notice ${notices[0].kind==='rain'?'comfort-summary-notice-rain':''}`} onClick={event=>openSheet(event.currentTarget)} aria-haspopup="dialog" aria-controls={sheetId} aria-expanded={sheetOpen}><Info size={15} aria-hidden="true"/><span>{notices.length>1&&<strong>{notices.length} reminders · </strong>}{notices[0].title}</span><ChevronDown size={14} aria-hidden="true"/></button>}
+    <button type="button" className={`comfort-summary-notice ${notices.length?(notices[0].kind==='rain'?'comfort-summary-notice-rain':''):'comfort-summary-notice-clear'}`} onClick={event=>openSheet(event.currentTarget)} aria-haspopup="dialog" aria-controls={sheetId} aria-expanded={sheetOpen} title={notices.length?notices.map(notice=>notice.title).join(' · '):clearReminderLabel}><Info size={15} aria-hidden="true"/><span>{notices.length?<><strong>{notices.length} {notices.length===1?'reminder':'reminders'} · </strong>{notices[0].title}</>:clearReminderLabel}</span><ChevronDown size={14} aria-hidden="true"/></button>
     <dialog ref={dialogRef} id={sheetId} className="comfort-sheet" aria-labelledby={titleId} onClose={()=>setSheetOpen(false)} onCancel={event=>{event.preventDefault();closeSheet();}} onClick={event=>{if(event.target!==event.currentTarget)return;const bounds=event.currentTarget.getBoundingClientRect();if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)closeSheet();}}>
       <div className="comfort-sheet-header"><div><h2 id={titleId}>Weather & pace</h2><p>A little room for a comfortable day</p></div><button type="button" className="comfort-sheet-close" onClick={closeSheet} aria-label="Close weather and pacing details" autoFocus><X size={20} aria-hidden="true"/></button></div>
       <div className="comfort-sheet-body">{details}</div>
