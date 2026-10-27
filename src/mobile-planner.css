@@ -1,0 +1,60 @@
+/* Mobile uses the document scroll; only the day selector stays above the plan. */
+@media (max-width:760px) {
+  .workspace.mobile-workspace {height:auto;min-height:100dvh;display:block;overflow:visible;padding-bottom:calc(76px + env(safe-area-inset-bottom));}
+  .mobile-workspace .workspace-body {display:block;min-height:0;overflow:visible;}
+  .mobile-workspace .timeline-column {display:block;width:100%;min-height:0;overflow:visible;border:0;}
+  .mobile-workspace .timeline-column.mobile-hidden,.mobile-workspace .map-column.mobile-hidden {display:none;}
+  .mobile-workspace .timeline-scroll {height:auto;min-height:0;overflow:visible;flex:none;padding:0 16px 24px;scroll-margin-top:64px;}
+  .mobile-workspace .timeline-stop,.mobile-workspace [data-activity-id] {scroll-margin-top:68px;}
+  .mobile-workspace .day-heading {padding:10px 16px 8px;}
+  .mobile-workspace .trip-overview {overflow:visible;height:auto;flex:none;}
+  .mobile-workspace .map-column {width:100%;height:calc(100dvh - 124px - env(safe-area-inset-bottom));min-height:350px;flex:none;padding:0 8px 8px;}
+  .mobile-trip-header {display:flex;align-items:center;gap:4px;min-height:60px;padding:8px 12px;background:var(--paper);border-bottom:1px solid var(--border);}
+  .mobile-trip-title {display:flex;align-items:center;gap:7px;min-width:0;flex:1;min-height:44px;padding:0 4px 0 0;border:0;background:none;text-align:left;}
+  .mobile-trip-title h1 {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:19px;letter-spacing:-.4px;font-weight:730;}
+  .mobile-brand-mark {width:28px;height:28px;border-radius:9px;background:var(--teal);color:white;display:grid;place-items:center;flex-shrink:0;}
+  .mobile-save-indicator {display:inline-flex;align-items:center;color:var(--teal);}
+  .mobile-save-indicator.needs-attention {color:#986326;}
+  .mobile-trip-actions {display:flex;gap:2px;flex-shrink:0;}
+  .mobile-header-action {display:grid;place-items:center;width:44px;height:44px;border:0;border-radius:12px;background:none;color:var(--teal);}
+  .mobile-header-action:hover {background:var(--teal-light);}
+  .mobile-day-summary h2 {font-size:17px;line-height:1.4;margin:2px 0 6px;}
+  .mobile-day-timing {display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--muted);}
+  .mobile-day-timing>span {font-variant-numeric:tabular-nums;}
+  .mobile-day-timing>button {display:flex;align-items:center;gap:5px;min-height:44px;padding:4px 0 4px 6px;border:0;background:none;font-size:12px;color:#51665d;}
+  .mobile-day-warning {display:flex;align-items:center;gap:7px;width:100%;min-height:44px;margin:3px 0 6px;padding:9px 11px;text-align:left;background:#fcf0df;border:1px solid #e9d4b2;border-radius:10px;color:#835927;font-size:12px;}
+  .mobile-day-warning>svg:last-child {margin-left:auto;}
+  .mobile-route-source {font-size:11px;line-height:1.5;color:var(--muted);padding:18px 0 0;}
+  .mobile-day-details {display:grid;gap:15px;}
+  .mobile-day-details dl {margin:0;border:1px solid var(--border);border-radius:12px;padding:4px 14px;}
+  .mobile-day-details dl>div {display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid var(--border);font-size:14px;}
+  .mobile-day-details dl>div:last-child {border:0;}
+  .mobile-day-details dt {color:var(--muted);}
+  .mobile-day-details dd {margin:0;text-align:right;font-weight:650;}
+  .mobile-day-details .button {min-height:46px;white-space:normal;}
+  .mobile-trip-menu {display:grid;gap:3px;}
+  .mobile-trip-menu>p {color:var(--muted);margin-bottom:12px;font-size:13px;}
+  .mobile-trip-menu>button {display:flex;align-items:center;gap:12px;width:100%;min-height:50px;padding:10px 6px;border:0;border-bottom:1px solid #eee8df;background:none;text-align:left;font-size:15px;}
+  .mobile-trip-menu>button svg {color:var(--teal);}
+  .mobile-trip-menu>.dt-collab-status,.mobile-trip-menu>.cw-save-status {margin:0 0 10px;padding:12px;border-radius:12px;}
+  .mobile-today-page {padding-bottom:calc(68px + env(safe-area-inset-bottom));}
+  .mobile-today-page .dt-travel {height:auto;min-height:calc(100dvh - 68px - env(safe-area-inset-bottom));overflow:visible;}
+  .mobile-today-page .dt-travel-undo {bottom:calc(72px + env(safe-area-inset-bottom));}
+  .mobile-details-issues {display:grid;gap:8px;padding:13px;background:#fcf0df;border:1px solid #e9d4b2;border-radius:12px;color:#835927;font-size:13px;}
+  .toast,.improve-mobile-return {bottom:calc(72px + env(safe-area-inset-bottom));}
+  .mobile-workspace .save-error,.mobile-workspace .offline-banner,.mobile-workspace .notice {font-size:12px;}
+  .mobile-workspace .planner-route-note {margin:8px 0;}
+  .mobile-workspace .timeline-scroll>.day-endpoint:first-child {margin-top:4px;}
+  .mobile-workspace .modal {scroll-margin:0;}
+}
+@media (max-width:360px) {
+  .mobile-trip-header {padding-inline:8px;}
+  .mobile-trip-title {gap:4px;}
+  .mobile-brand-mark {display:none;}
+  .mobile-trip-title h1 {font-size:18px;}
+  .mobile-day-timing {font-size:11px;}
+  .mobile-day-timing>button {font-size:11px;}
+}
+@media print {
+  .mobile-trip-header,.mobile-trip-navigation,.mobile-day-bar {display:none!important;}
+}

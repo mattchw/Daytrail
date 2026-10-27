@@ -126,6 +126,8 @@ Production builds support deliberate offline app preparation; see **Pacing, weat
 
 ## Pacing, weather and offline access
 
+On phones, the planner scrolls as one page with a compact sticky day selector and **Trip / Plan / Today** navigation at the bottom. Tap the day/date to jump to a day or add days, the booking summary to open flights and stays, and the weather/walking/pace line for its full settings and reminders. The trip-name menu contains account, sharing and trip settings; **More** opens day timing and **Improve this day**. Save errors and itinerary conflicts stay visible.
+
 The day header keeps weather, walking, meal timing and **Pace** together; day tabs remain compact without weather. Pace defaults to Relaxed (8 km), with Moderate (12 km) and Active (16 km). A trip default lives in trip settings; choosing a day pace overrides it for that day. Walking counts numeric walking-route distances, known transit walking steps and explicitly labelled estimates inside attractions. Missing measurements remain unknown. Expand a stop’s **Meals, walking & weather** section to confirm meal/snack status, walking distance or indoor/outdoor setting.
 
 Meal reminders require a gap of at least four hours that covers all of lunch (11:30–13:30) or dinner (18:30–20:30), in the relevant local time zone. A snack does not count as a meal. Meal insertion and driving previews are bounded, explicit checks against current routes, hours, fixed bookings, airport buffers, finish goals and walking limits. Unknown routes or unconfirmed restaurant hours prevent a verified proposal. Changes use ordinary itinerary Undo. Reminders can be dismissed per device/account/day and restored in trip settings; small unrelated edits do not bring them back.
